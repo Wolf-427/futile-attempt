@@ -20,6 +20,38 @@ const Canvas = {
   _history:    [],
   _histIdx:    -1,
 
+  // Custom prompt — replaces native prompt() which is blocked in Electron
+  _prompt(message, defaultVal = '') {
+    return new Promise(resolve => {
+      const overlay = document.createElement('div')
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99999;display:flex;align-items:center;justify-content:center;'
+      const box = document.createElement('div')
+      box.style.cssText = 'background:var(--bg2);border:1px solid var(--b2);border-radius:var(--r3);padding:24px;min-width:300px;display:flex;flex-direction:column;gap:12px;box-shadow:0 8px 32px rgba(0,0,0,.6);'
+      const lbl = document.createElement('div')
+      lbl.style.cssText = 'font-size:13px;color:var(--tx2);'
+      lbl.textContent = message
+      const inp = document.createElement('input')
+      inp.value = defaultVal
+      inp.style.cssText = 'padding:8px 12px;background:var(--bg);border:1px solid var(--accent);border-radius:var(--r2);color:var(--tx);font-size:14px;outline:none;width:100%;box-sizing:border-box;'
+      const row = document.createElement('div')
+      row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;'
+      const cancel = document.createElement('button')
+      cancel.textContent = 'Cancel'
+      cancel.style.cssText = 'padding:7px 16px;background:transparent;border:1px solid var(--b1);border-radius:var(--r2);color:var(--tx2);font-size:12px;cursor:pointer;'
+      const ok = document.createElement('button')
+      ok.textContent = 'OK'
+      ok.style.cssText = 'padding:7px 16px;background:var(--accent);border:none;border-radius:var(--r2);color:#0f0f0d;font-size:12px;font-weight:500;cursor:pointer;'
+      const finish = (val) => { overlay.remove(); resolve(val) }
+      cancel.onclick = () => finish(null)
+      ok.onclick = () => finish(inp.value.trim() || null)
+      inp.addEventListener('keydown', e => { if(e.key==='Enter') finish(inp.value.trim()||null); if(e.key==='Escape') finish(null) })
+      row.appendChild(cancel); row.appendChild(ok)
+      box.appendChild(lbl); box.appendChild(inp); box.appendChild(row)
+      overlay.appendChild(box); document.body.appendChild(overlay)
+      setTimeout(() => { inp.focus(); inp.select() }, 50)
+    })
+  },
+
   // ── Mount ─────────────────────────────────────────────────────────────────
 
   mount(container, dir, file) {
@@ -270,16 +302,21 @@ const Canvas = {
 
   // ── GROUPING ──────────────────────────────────────────────────────────────
 
-  _groupSelected() {
-    console.log('[GROUP] called, selected:', [...this._selected])
-    const ids = [...this._selected]
-    if (ids.length < 2) { alert('Select 2+ pins first. Currently selected: ' + ids.length); return }
+  _showHint(msg, ms=2000) {
+    const el=document.getElementById('cv-hint'); if(!el) return
+    const prev=el.textContent; el.textContent=msg; el.style.color='var(--accent)'
+    setTimeout(()=>{el.textContent=prev;el.style.color=''}, ms)
+  },
 
-    const name = prompt('Group name:', 'Group')
-    if (!name?.trim()) return
+  async _groupSelected() {
+    const ids = [...this._selected]
+    if (ids.length < 2) { this._showHint('Shift+click or drag-select 2+ pins first, then group.', 3000); return }
+
+    const name = await this._prompt('Group name:', 'Group')
+    if (!name) return
 
     const members = ids.map(id => this._board.nodes.find(n => n.id === id)).filter(n => n && n.type !== 'group')
-    if (members.length < 2) { alert('Select at least 2 non-group pins.'); return }
+    if (members.length < 2) { this._showHint('Select at least 2 non-group pins.', 3000); return }
 
     const PAD = 32
     const minX = Math.min(...members.map(n => n.x)) - PAD
@@ -334,7 +371,7 @@ const Canvas = {
     }
     if (node.type==='subboard') { items.push({label:'Open board',action:()=>App.openBoard(node.file)}); items.push({label:'Duplicate',action:()=>this._duplicateNode(node)}); items.push('---') }
     if (node.type==='image') { items.push({label:'Duplicate',action:()=>this._duplicateNode(node)}); items.push('---') }
-    if (node.type==='group') { items.push({label:'Rename group',action:()=>{const v=prompt('Group name:',node.name);if(v?.trim()){node.name=v.trim();this._renderNode(node);this._persist()}}}); items.push('---') }
+    if (node.type==='group') { items.push({label:'Rename group',action:()=>{this._prompt('Group name:',node.name).then(v=>{if(v){node.name=v;this._renderNode(node);this._persist()}})}}); items.push('---') }
     items.push({label:'Delete', danger:true, action:()=>{this._removeNode(node.id);this._snapshot();this._persist();this._renderArrows()}})
     this._showMenu(cx, cy, items)
   },
@@ -577,7 +614,7 @@ const Canvas = {
     el.appendChild(cover)
     const foot=document.createElement('div');foot.className='subboard-foot';const nm=document.createElement('span');nm.className='subboard-name';nm.textContent=n.name;foot.appendChild(nm);el.appendChild(foot)
     const acts=document.createElement('div');acts.className='subboard-actions';acts.addEventListener('mousedown',e=>e.stopPropagation())
-    const ren=document.createElement('button');ren.className='subboard-act';ren.textContent='✎';ren.onclick=()=>{const v=prompt('Name:',n.name);if(v?.trim()){n.name=v.trim();nm.textContent=n.name;this._persist()}}
+    const ren=document.createElement('button');ren.className='subboard-act';ren.textContent='✎';ren.onclick=()=>{this._prompt('Name:',n.name).then(v=>{if(v){n.name=v;nm.textContent=n.name;this._persist()}})}
     const sc=document.createElement('button');sc.className='subboard-act';sc.textContent='⊡';sc.onclick=async()=>{const fp=await api.dialog.file([{name:'Images',extensions:['jpg','jpeg','png','webp','gif']}]);if(!fp)return;const dest=`${this._dir}/references/cover-${crypto.randomUUID()}-${fp.split('/').pop()}`;await api.fs.copy(fp,dest);n.cover=dest;api.fs.readBin(dest).then(b=>{const img=document.createElement('img');img.src=`data:image/jpeg;base64,${b}`;img.draggable=false;cover.innerHTML='';cover.appendChild(img)}).catch(()=>{});this._persist()}
     const dl=document.createElement('button');dl.className='subboard-act';dl.style.color='var(--err)';dl.textContent='×';dl.onclick=()=>{this._removeNode(n.id);this._persist()}
     acts.appendChild(ren);acts.appendChild(sc);acts.appendChild(dl);el.appendChild(acts)
