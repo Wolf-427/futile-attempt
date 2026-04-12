@@ -3,23 +3,17 @@ const Editor = {
   _saveTimer: null,
   _content: null,
 
-  // Page sizes in px at 96dpi
   PAGE_SIZES: {
     a4:     { width: 794,  height: 1123, label: 'A4' },
     letter: { width: 816,  height: 1056, label: 'Letter' },
     custom: { width: 794,  height: 1123, label: 'Custom' },
   },
-  MARGIN: 96, // px per side
+  MARGIN: 80,
 
   async getPageSize() {
     try {
       const saved = await api.store.get('page-size')
-      if (saved && this.PAGE_SIZES[saved.preset]) {
-        if (saved.preset === 'custom') {
-          return { ...saved, label: 'Custom' }
-        }
-        return { ...this.PAGE_SIZES[saved.preset], preset: saved.preset }
-      }
+      if (saved && saved.width) return saved
     } catch {}
     return { ...this.PAGE_SIZES.a4, preset: 'a4' }
   },
@@ -29,14 +23,14 @@ const Editor = {
       <div class="editor">
         <div class="editor-toolbar" id="editor-toolbar"></div>
         <div class="editor-scroll" id="editor-scroll">
-          <div class="editor-pages" id="editor-pages">
+          <div class="editor-page-wrap" id="editor-page-wrap">
             <div id="editor-content" class="ProseMirror" contenteditable="true" spellcheck="true" data-placeholder="Begin writing…"></div>
           </div>
         </div>
         <div class="editor-status">
           <span id="word-count">0 words</span>
           <span id="char-count">0 characters</span>
-          <span id="page-count" style="margin-left:auto;color:var(--tx3)"></span>
+          <span id="page-count" style="margin-left:auto"></span>
         </div>
       </div>
     `
@@ -49,99 +43,62 @@ const Editor = {
 
   async _applyPageSize() {
     const pg = await this.getPageSize()
-    const pages = document.getElementById('editor-pages')
+    const wrap = document.getElementById('editor-page-wrap')
     const content = this._content
-    if (!pages || !content) return
-    const innerW = pg.width - this.MARGIN * 2
-    pages.style.cssText = `
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      padding: 48px 0 80px;
-      gap: 0;
-    `
-    content.style.cssText = `
+    if (!wrap || !content) return
+
+    wrap.style.cssText = `
       width: ${pg.width}px;
       min-height: ${pg.height}px;
-      padding: ${this.MARGIN}px;
-      background: #1a1a16;
+      background: #1c1c18;
       border: 1px solid var(--b1);
       border-radius: 2px;
-      box-shadow: 0 2px 16px rgba(0,0,0,0.4);
-      column-width: unset;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+      padding: ${this.MARGIN}px;
+      position: relative;
     `
-    // Set up page break indicators via CSS
-    this._updatePageBreaks(pg)
-  },
 
-  _updatePageBreaks(pg) {
-    // Remove old style
-    const old = document.getElementById('page-break-style')
-    if (old) old.remove()
-    const style = document.createElement('style')
-    style.id = 'page-break-style'
-    const pageH = pg.height - this.MARGIN * 2 // content height per page
-    style.textContent = `
-      #editor-content {
-        background-image: repeating-linear-gradient(
-          to bottom,
-          transparent,
-          transparent ${pageH - 1}px,
-          rgba(255,255,255,0.06) ${pageH - 1}px,
-          rgba(255,255,255,0.06) ${pageH}px
-        );
-        background-size: 100% ${pageH}px;
-        background-position: 0 0;
-      }
-    `
-    document.head.appendChild(style)
+    // Page break guide lines via background on the wrap
+    const lineH = pg.height - this.MARGIN * 2
+    wrap.style.backgroundImage = `repeating-linear-gradient(
+      to bottom,
+      transparent,
+      transparent ${lineH - 1}px,
+      rgba(255,255,255,0.07) ${lineH - 1}px,
+      rgba(255,255,255,0.07) ${lineH}px
+    )`
+    wrap.style.backgroundSize = `100% ${lineH}px`
+    wrap.style.backgroundPosition = `0 ${this.MARGIN}px`
+
+    // Content itself stays simple — no extra styles that block input
+    content.style.cssText = `outline: none; min-height: ${pg.height - this.MARGIN * 2}px;`
+
+    // Update page selector
+    const sel = document.getElementById('pg-sel')
+    if (sel) sel.value = pg.preset || 'a4'
+
     this._updatePageCount(pg)
   },
 
   _updatePageCount(pg) {
     if (!this._content) return
-    const pageH = pg.height - this.MARGIN * 2
-    const totalH = this._content.scrollHeight
-    const pages = Math.max(1, Math.ceil(totalH / pageH))
+    const lineH = pg.height - this.MARGIN * 2
+    const pages = Math.max(1, Math.ceil(this._content.scrollHeight / lineH))
     const el = document.getElementById('page-count')
     if (el) el.textContent = `${pages} ${pages === 1 ? 'page' : 'pages'}`
   },
 
   _buildToolbar() {
     const tb = document.getElementById('editor-toolbar')
+
     const btn = (label, cmd, arg, title) => {
       const b = document.createElement('button')
-      b.className = 'editor-tool'
-      b.textContent = label
-      b.title = title || label
-      b.dataset.cmd = cmd
-      b.dataset.arg = arg || ''
+      b.className = 'editor-tool'; b.textContent = label; b.title = title || label
+      b.dataset.cmd = cmd; b.dataset.arg = arg || ''
       b.addEventListener('mousedown', e => { e.preventDefault(); this._exec(cmd, arg); this._updateToolbar() })
       return b
     }
     const div = () => { const d = document.createElement('div'); d.className = 'editor-div'; return d }
-
-    // Page size selector
-    const pgSel = document.createElement('select')
-    pgSel.className = 'editor-page-sel'
-    pgSel.title = 'Page size'
-    ;[['a4','A4'],['letter','Letter'],['custom','Custom']].forEach(([val,lbl]) => {
-      const opt = document.createElement('option'); opt.value = val; opt.textContent = lbl; pgSel.appendChild(opt)
-    })
-    // Load current
-    this.getPageSize().then(pg => { pgSel.value = pg.preset || 'a4' })
-    pgSel.addEventListener('change', async () => {
-      let saved
-      if (pgSel.value === 'custom') {
-        const w = parseInt(prompt('Page width (px):', '794') || '794')
-        const h = parseInt(prompt('Page height (px):', '1123') || '1123')
-        saved = { preset: 'custom', width: w, height: h, label: 'Custom' }
-      } else {
-        saved = { ...this.PAGE_SIZES[pgSel.value], preset: pgSel.value }
-      }
-      await api.store.set('page-size', saved)
-      this._applyPageSize()
-    })
 
     ;[
       btn('H1','formatBlock','h1'), btn('H2','formatBlock','h2'), btn('H3','formatBlock','h3'), div(),
@@ -151,14 +108,31 @@ const Editor = {
 
     // Page break button
     const pbBtn = document.createElement('button')
-    pbBtn.className = 'editor-tool'
-    pbBtn.textContent = '⊟'
-    pbBtn.title = 'Insert page break'
+    pbBtn.className = 'editor-tool'; pbBtn.textContent = '⊟'; pbBtn.title = 'Insert page break (⌘↵)'
     pbBtn.addEventListener('mousedown', e => { e.preventDefault(); this._insertPageBreak() })
     tb.appendChild(pbBtn)
     tb.appendChild(div())
 
-    tb.appendChild(pgSel)
+    // Page size selector
+    const sel = document.createElement('select')
+    sel.id = 'pg-sel'; sel.className = 'editor-page-sel'; sel.title = 'Page size'
+    ;[['a4','A4'],['letter','Letter'],['custom','Custom']].forEach(([val,lbl]) => {
+      const opt = document.createElement('option'); opt.value = val; opt.textContent = lbl; sel.appendChild(opt)
+    })
+    this.getPageSize().then(pg => { sel.value = pg.preset || 'a4' })
+    sel.addEventListener('change', async () => {
+      let saved
+      if (sel.value === 'custom') {
+        const w = parseInt(prompt('Page width (px):', '794') || '794')
+        const h = parseInt(prompt('Page height (px):', '1123') || '1123')
+        saved = { preset: 'custom', width: w, height: h, label: 'Custom' }
+      } else {
+        saved = { ...this.PAGE_SIZES[sel.value], preset: sel.value }
+      }
+      await api.store.set('page-size', saved)
+      this._applyPageSize()
+    })
+    tb.appendChild(sel)
 
     this._content.addEventListener('keyup', () => this._updateToolbar())
     this._content.addEventListener('mouseup', () => this._updateToolbar())
@@ -179,9 +153,6 @@ const Editor = {
   },
 
   _insertPageBreak() {
-    const hr = document.createElement('hr')
-    hr.className = 'page-break'
-    hr.contentEditable = 'false'
     document.execCommand('insertHTML', false, '<hr class="page-break" contenteditable="false"><p><br></p>')
     this._content.focus()
   },
@@ -198,7 +169,6 @@ const Editor = {
     if ((e.metaKey || e.ctrlKey) && e.key === 'b') { e.preventDefault(); this._exec('bold') }
     if ((e.metaKey || e.ctrlKey) && e.key === 'i') { e.preventDefault(); this._exec('italic') }
     if ((e.metaKey || e.ctrlKey) && e.key === 'u') { e.preventDefault(); this._exec('underline') }
-    // Cmd+Enter = page break
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); this._insertPageBreak() }
   },
 
