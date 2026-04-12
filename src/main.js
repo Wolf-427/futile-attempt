@@ -78,7 +78,17 @@ function setupUpdater() {
       const res = await net.fetch(`https://api.github.com/repos/${owner}/${repo}/commits/main`, { headers })
       const data = await res.json()
       const s = await readStore()
-      return { hasUpdate: data.sha !== (s['current-sha'] || null), latestSha: data.sha, message: data.commit?.message || '' }
+      const hasUpdate = data.sha !== (s['current-sha'] || null)
+      // Try to get the new version number from package.json on GitHub
+      let newVersion = null
+      if (hasUpdate) {
+        try {
+          const pkgRes = await net.fetch(`https://raw.githubusercontent.com/${owner}/${repo}/${data.sha}/package.json`, { headers })
+          const pkg = await pkgRes.json()
+          newVersion = pkg.version || null
+        } catch {}
+      }
+      return { hasUpdate, latestSha: data.sha, message: data.commit?.message || '', newVersion }
     } catch (e) { return { error: e.message } }
   })
   ipcMain.handle('update:apply', async (_, token, owner, repo, sha) => {

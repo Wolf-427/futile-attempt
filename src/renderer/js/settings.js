@@ -2,7 +2,6 @@ const Settings = {
   async mount(container, project) {
     const version = await api.app.version().catch(() => '0.1.0')
     const token   = await api.store.get('gh-token').catch(() => null)
-    const appRepo = await api.store.get('app-repo').catch(() => '')
 
     container.innerHTML = `
       <div class="settings">
@@ -25,26 +24,19 @@ const Settings = {
         </div>
 
         <div class="settings-section">
-          <div class="settings-title">App source repo</div>
-          <div class="settings-note">The GitHub repo where Scriptum's code lives — used to check for updates. Format: owner/repo</div>
-          <div class="settings-row">
-            <input class="settings-input" id="app-repo" placeholder="Wolf-427/futile-attempt" value="${appRepo}"/>
-            <button class="btn-sm" id="save-app-repo" style="margin-left:8px">Save</button>
-          </div>
-          <div id="repo-msg" class="settings-msg" style="margin-top:6px"></div>
-        </div>
-
-        <div class="settings-section">
           <div class="settings-title">App updates</div>
-          <div class="settings-note">Scriptum checks GitHub for new commits and downloads changed files directly — no build needed.</div>
+          <div class="settings-note">Checks GitHub for new commits and downloads changed files directly — no build needed.</div>
           <div id="update-card"></div>
           <button class="btn-sm" id="check-update" style="margin-top:8px">Check for updates</button>
           <div id="update-msg" class="settings-msg" style="margin-top:8px"></div>
         </div>
       </div>
     `
+    this._currentVersion = version
     this._bind()
   },
+
+  _currentVersion: '0.1.0',
 
   _bind() {
     document.getElementById('save-token')?.addEventListener('click', async () => {
@@ -55,26 +47,18 @@ const Settings = {
     })
     document.getElementById('clear-token')?.addEventListener('click', async () => { await api.store.del('gh-token'); location.reload() })
 
-    document.getElementById('save-app-repo').addEventListener('click', async () => {
-      await api.store.set('app-repo', document.getElementById('app-repo').value.trim())
-      const m = document.getElementById('repo-msg'); m.textContent = 'Saved'; m.className = 'settings-msg ok'
-      setTimeout(() => m.textContent = '', 2000)
-    })
-
     document.getElementById('check-update').addEventListener('click', async () => {
-      const repo = document.getElementById('app-repo').value.trim() || await api.store.get('app-repo')
-      if (!repo) { this._msg('Enter app source repo first', 'err'); return }
-      const [owner, repoName] = repo.split('/')
-      if (!owner || !repoName) { this._msg('Format must be owner/repo', 'err'); return }
       const token = await api.store.get('gh-token')
+      if (!token) { this._msg('Save a GitHub token first', 'err'); return }
       this._msg('Checking…', ''); document.getElementById('update-card').innerHTML = ''
-      const result = await api.updater.check(token, owner, repoName)
+      const result = await api.updater.check(token, 'Wolf-427', 'futile-attempt')
       if (result.error) { this._msg('Error: ' + result.error, 'err'); return }
       if (!result.hasUpdate) { this._msg('✓ Already up to date', 'ok'); return }
       this._msg('', '')
       document.getElementById('update-card').innerHTML = `
         <div class="update-card">
           <div class="update-title">Update available</div>
+          <div class="update-meta">v${this._currentVersion} → v${result.newVersion || result.latestSha.slice(0,7)}</div>
           ${result.message ? `<div class="update-msg">${result.message}</div>` : ''}
           <button class="btn-sm primary" id="apply-btn" style="margin-top:12px">Download and apply</button>
         </div>
@@ -82,7 +66,7 @@ const Settings = {
       document.getElementById('apply-btn').addEventListener('click', async () => {
         document.getElementById('apply-btn').disabled = true
         this._msg('Applying update…', '')
-        const r = await api.updater.apply(token, owner, repoName, result.latestSha)
+        const r = await api.updater.apply(token, 'Wolf-427', 'futile-attempt', result.latestSha)
         if (r.ok) { this._msg(`✓ Updated ${r.filesUpdated} files. Restarting…`, 'ok'); setTimeout(() => api.updater.restart(), 1500) }
         else { this._msg('✗ ' + r.error, 'err'); document.getElementById('apply-btn').disabled = false }
       })
