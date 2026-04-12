@@ -271,8 +271,9 @@ const Canvas = {
   // ── GROUPING ──────────────────────────────────────────────────────────────
 
   _groupSelected() {
+    console.log('[GROUP] called, selected:', [...this._selected])
     const ids = [...this._selected]
-    if (ids.length < 2) { alert('Shift+click or drag-select 2 or more pins first, then press ⌘G or use the right-click menu.'); return }
+    if (ids.length < 2) { alert('Select 2+ pins first. Currently selected: ' + ids.length); return }
 
     const name = prompt('Group name:', 'Group')
     if (!name?.trim()) return
