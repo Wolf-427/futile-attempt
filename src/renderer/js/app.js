@@ -19,15 +19,8 @@ const App = {
   async renderSplash(root) {
     const projects = Store.get('projects')
     const version = await api.app.version().catch(() => '0.2.3-alpha')
-
-    // Load cover paths for projects
+    // Render immediately with placeholder covers, then async-inject images
     const covers = {}
-    for (const p of projects) {
-      try {
-        const coverPath = await api.store.get(`project-cover-path-${p.id}`)
-        if (coverPath) covers[p.id] = `file://${coverPath}`
-      } catch {}
-    }
 
     root.innerHTML = `
       <div class="splash">
@@ -75,10 +68,7 @@ const App = {
                   ${[...projects].reverse().map(p => `
                     <div class="splash-card" data-id="${p.id}">
                       <div class="splash-card-thumb">
-                        ${covers[p.id]
-                          ? `<img src="${covers[p.id]}" class="splash-card-img" draggable="false"/>`
-                          : `<div class="splash-card-empty"><span>S</span></div>`
-                        }
+                        <div class="splash-card-empty" id="cover-${p.id}"><span>S</span></div>
                         <button class="splash-card-set-cover" data-id="${p.id}" title="Set cover image">Set cover</button>
                       </div>
                       <div class="splash-card-meta">
@@ -106,6 +96,24 @@ const App = {
       })
     })
 
+    // Load covers async and inject without re-render
+    ;(async () => {
+      for (const p of projects) {
+        try {
+          const coverPath = await api.store.get(`project-cover-path-${p.id}`)
+          if (!coverPath) continue
+          const el = document.getElementById(`cover-${p.id}`)
+          if (!el) continue
+          const img = document.createElement('img')
+          img.src = `file://${coverPath}`
+          img.className = 'splash-card-img'
+          img.draggable = false
+          img.onerror = () => {} // silently ignore missing files
+          el.replaceWith(img)
+        } catch {}
+      }
+    })()
+
     document.querySelectorAll('.splash-card-set-cover').forEach(btn => {
       btn.addEventListener('click', async e => {
         e.stopPropagation()
@@ -119,8 +127,9 @@ const App = {
         img.className = 'splash-card-img'
         img.draggable = false
         const thumb = btn.closest('.splash-card-thumb')
-        thumb.querySelector('.splash-card-empty,.splash-card-img')?.remove()
-        thumb.prepend(img)
+        const existing = thumb.querySelector('.splash-card-empty, .splash-card-img')
+        if (existing) existing.replaceWith(img)
+        else thumb.prepend(img)
       })
     })
   },
