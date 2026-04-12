@@ -218,3 +218,7 @@ hr.page-break{border:none;border-top:2px dashed rgba(201,169,110,0.3);margin:0;w
 .splash-recent-path { font-size:11px; color:var(--tx3); font-family:var(--mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .splash-recent-arrow { font-size:18px; color:var(--tx3); text-align:right; }
 .splash-recent-item:hover .splash-recent-arrow { color:var(--accent); }
+
+/* Close project button */
+.titlebar-close-project { -webkit-app-region:no-drag; padding:3px 10px; background:transparent; border:1px solid var(--b0); border-radius:var(--r); font-size:11px; color:var(--tx3); }
+.titlebar-close-project:hover { border-color:var(--b1); color:var(--tx2); }

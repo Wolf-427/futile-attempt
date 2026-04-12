@@ -1,7 +1,7 @@
 const App = {
   _project: null,
 
-  async init() {
+  init() {
     Store.sub(['activeId', 'view', 'sidebar', 'boardFile', 'boardStack'], () => {
       this.render()
     })
@@ -168,6 +168,7 @@ const App = {
           <div class="git-area">
             <span class="git-branch">⎇ ${s.git.branch}</span>
             <span class="git-dot ${s.git.dirty ? 'dirty' : 'clean'}" title="${s.git.dirty ? 'Unsaved changes' : 'All saved'}"></span>
+            <button class="titlebar-close-project" id="close-project" title="Close project">Close project</button>
           </div>
         </div>
         <div class="body">
@@ -184,6 +185,13 @@ const App = {
     })
     document.getElementById('toggle-sidebar').addEventListener('click', () => {
       Store.set('sidebar', !Store.get('sidebar'))
+    })
+    document.getElementById('close-project').addEventListener('click', () => {
+      Store._data.activeId = null
+      Store._data.docPath = null
+      Store._data.boardStack = []
+      Store.save()
+      Store._notify('activeId')
     })
 
     if (s.sidebar && s.view !== 'settings') this.renderSidebar(project)

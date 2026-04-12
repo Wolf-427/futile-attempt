@@ -10,12 +10,16 @@
   <link rel="stylesheet" href="css/app.css"/>
 </head>
 <body>
-  <div id="app"></div>
+  <div id="app" style="height:100%;background:#0f0f0d;"></div>
   <script src="js/store.js"></script>
   <script src="js/project.js"></script>
   <script src="js/editor.js"></script>
   <script src="js/canvas.js"></script>
   <script src="js/settings.js"></script>
   <script src="js/app.js"></script>
+  <script>
+    // Wait for store to async-verify project folders before rendering
+    Store.load().then(() => App.init())
+  </script>
 </body>
 </html>
