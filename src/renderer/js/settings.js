@@ -54,6 +54,7 @@ const Settings = {
       this._msg('Checking…', '')
       document.getElementById('update-card').innerHTML = ''
       const result = await api.updater.check(token, 'Wolf-427', 'futile-attempt')
+      console.log('Update check result:', JSON.stringify(result))
       if (result.error) { this._msg('Error: ' + result.error, 'err'); return }
       if (!result.hasUpdate) { this._msg('✓ Already up to date', 'ok'); return }
       this._msg('', '')

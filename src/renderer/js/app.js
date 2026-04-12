@@ -18,117 +18,120 @@ const App = {
 
   async renderSplash(root) {
     const projects = Store.get('projects')
-    const version = await api.app.version().catch(() => '0.2.2-alpha')
+    const version = await api.app.version().catch(() => '0.2.3-alpha')
 
-    // Load cover images for recent projects
+    // Load cover paths for projects
     const covers = {}
     for (const p of projects) {
       try {
-        const meta = await api.store.get(`project-cover-${p.id}`)
-        if (meta) covers[p.id] = meta
+        const coverPath = await api.store.get(`project-cover-path-${p.id}`)
+        if (coverPath) covers[p.id] = `file://${coverPath}`
       } catch {}
     }
 
     root.innerHTML = `
       <div class="splash">
         <div class="splash-drag"></div>
+        <div class="splash-layout">
 
-        <div class="splash-top">
-          <div class="splash-brand">
-            <div class="splash-mark">S</div>
-            <div>
-              <div class="splash-name">Scriptum</div>
-              <div class="splash-ver">v${version}</div>
+          <!-- Left sidebar -->
+          <div class="splash-sidebar">
+            <div class="splash-logo">
+              <div class="splash-mark">S</div>
+              <div class="splash-wordmark">Scriptum</div>
+            </div>
+            <div class="splash-ver">v${version}</div>
+
+            <div class="splash-divider"></div>
+
+            <button class="splash-side-btn primary" id="btn-new">
+              <span class="splash-side-icon">+</span>
+              New project
+            </button>
+            <button class="splash-side-btn" id="btn-open">
+              <span class="splash-side-icon">⌂</span>
+              Open project
+            </button>
+
+            <div id="splash-form" class="splash-form hidden">
+              <input class="splash-input" id="project-name" placeholder="Project name…" autocomplete="off"/>
+              <div class="splash-form-row">
+                <button class="splash-form-cancel" id="btn-cancel">Cancel</button>
+                <button class="splash-form-confirm" id="btn-create">Choose folder →</button>
+              </div>
+              <div id="splash-err" class="splash-err"></div>
             </div>
           </div>
-          <div class="splash-btns">
-            <button class="splash-btn primary" id="btn-new">New project</button>
-            <button class="splash-btn" id="btn-open">Open project</button>
-          </div>
-        </div>
 
-        <div id="splash-form" class="splash-form hidden">
-          <input class="splash-input" id="project-name" placeholder="Project name…" autocomplete="off"/>
-          <button class="splash-btn primary" id="btn-create">Choose folder →</button>
-          <button class="splash-btn" id="btn-cancel">Cancel</button>
-          <div id="splash-err" class="splash-err"></div>
-        </div>
+          <!-- Main area -->
+          <div class="splash-main">
+            <div class="splash-main-header">
+              <div class="splash-main-title">Recent projects</div>
+            </div>
 
-        <div class="splash-recent-wrap">
-          <div class="splash-recent-label">Recent</div>
-          ${projects.length === 0
-            ? `<div class="splash-empty">No recent projects</div>`
-            : `<div class="splash-cards">
-                ${[...projects].reverse().map(p => {
-                  const cover = covers[p.id]
-                  return `
+            ${projects.length === 0
+              ? `<div class="splash-empty">No recent projects yet.<br>Create your first project to get started.</div>`
+              : `<div class="splash-grid">
+                  ${[...projects].reverse().map(p => `
                     <div class="splash-card" data-id="${p.id}">
-                      <div class="splash-card-cover" data-id="${p.id}">
-                        ${cover
-                          ? `<img src="${cover}" class="splash-card-img" draggable="false"/>`
-                          : `<div class="splash-card-placeholder"><span>S</span></div>`
+                      <div class="splash-card-thumb">
+                        ${covers[p.id]
+                          ? `<img src="${covers[p.id]}" class="splash-card-img" draggable="false"/>`
+                          : `<div class="splash-card-empty"><span>S</span></div>`
                         }
-                        <button class="splash-card-cover-btn" data-id="${p.id}" title="Set cover image">⊡</button>
+                        <button class="splash-card-set-cover" data-id="${p.id}" title="Set cover image">Set cover</button>
                       </div>
-                      <div class="splash-card-footer">
-                        <div class="splash-card-name">${p.name}</div>
-                        <div class="splash-card-path">${p.dir.split('/').slice(-2).join('/')}</div>
+                      <div class="splash-card-meta">
+                        <div class="splash-card-name" title="${p.name}">${p.name}</div>
+                        <div class="splash-card-path" title="${p.dir}">${p.dir.split('/').slice(-2).join('/')}</div>
                       </div>
                     </div>
-                  `
-                }).join('')}
-              </div>`
-          }
+                  `).join('')}
+                </div>`
+            }
+          </div>
+
         </div>
       </div>
     `
 
-    // Bind actions
+    // Bind
     document.getElementById('btn-new').onclick = () => this._showNewForm()
     document.getElementById('btn-open').onclick = () => this.openProject()
 
-    // Open project cards
     document.querySelectorAll('.splash-card').forEach(card => {
       card.addEventListener('click', e => {
-        if (e.target.closest('.splash-card-cover-btn')) return
+        if (e.target.closest('.splash-card-set-cover')) return
         Store.set('activeId', card.dataset.id)
       })
     })
 
-    // Cover image buttons
-    document.querySelectorAll('.splash-card-cover-btn').forEach(btn => {
+    document.querySelectorAll('.splash-card-set-cover').forEach(btn => {
       btn.addEventListener('click', async e => {
         e.stopPropagation()
         const id = btn.dataset.id
         const fp = await api.dialog.file([{ name: 'Images', extensions: ['jpg','jpeg','png','webp','gif'] }])
         if (!fp) return
-        // Read as base64 and store
-        const b64 = await api.fs.readBin(fp)
-        const src = `data:image/jpeg;base64,${b64}`
-        await api.store.set(`project-cover-${id}`, src)
-        // Update UI immediately
-        const coverEl = document.querySelector(`.splash-card-cover[data-id="${id}"]`)
-        if (coverEl) {
-          coverEl.querySelector('.splash-card-placeholder,.splash-card-img')?.remove()
-          const img = document.createElement('img')
-          img.src = src; img.className = 'splash-card-img'; img.draggable = false
-          coverEl.prepend(img)
-        }
+        // Store the file path directly — use file:// URL to display
+        await api.store.set(`project-cover-path-${id}`, fp)
+        const img = document.createElement('img')
+        img.src = `file://${fp}`
+        img.className = 'splash-card-img'
+        img.draggable = false
+        const thumb = btn.closest('.splash-card-thumb')
+        thumb.querySelector('.splash-card-empty,.splash-card-img')?.remove()
+        thumb.prepend(img)
       })
     })
   },
 
   _showNewForm() {
-    const form = document.getElementById('splash-form')
-    form.classList.remove('hidden')
+    document.getElementById('splash-form').classList.remove('hidden')
     document.getElementById('project-name').focus()
-    document.getElementById('btn-new').disabled = true
-    document.getElementById('btn-open').disabled = true
     document.getElementById('btn-cancel').onclick = () => {
-      form.classList.add('hidden')
+      document.getElementById('splash-form').classList.add('hidden')
       document.getElementById('project-name').value = ''
-      document.getElementById('btn-new').disabled = false
-      document.getElementById('btn-open').disabled = false
+      document.getElementById('splash-err').textContent = ''
     }
     document.getElementById('btn-create').onclick = () => this.createProject()
     document.getElementById('project-name').onkeydown = e => {
@@ -192,8 +195,8 @@ const App = {
           <div class="spacer"></div>
           <div class="git-area">
             <span class="git-branch">⎇ ${s.git.branch}</span>
-            <span class="git-dot ${s.git.dirty?'dirty':'clean'}" title="${s.git.dirty?'Unsaved':'All saved'}"></span>
-            <button class="titlebar-close-project" id="close-project">Close project</button>
+            <span class="git-dot ${s.git.dirty?'dirty':'clean'}" title="${s.git.dirty?'Unsaved':'Saved'}"></span>
+            <button class="titlebar-close-project" id="close-project">Close</button>
           </div>
         </div>
         <div class="body">
