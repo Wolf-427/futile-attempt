@@ -216,10 +216,21 @@ const App = {
     const panel = document.getElementById('splash-settings-panel')
     if (!panel) return
     panel.classList.remove('hidden')
-    panel.style.cssText = 'flex:1;overflow-y:auto;'
+    panel.style.cssText = 'flex:1;overflow-y:auto;position:relative;'
     document.querySelectorAll('.splash-side-btn').forEach(b => b.classList.remove('active-nav'))
     document.getElementById('btn-settings')?.classList.add('active-nav')
     Settings.mount(panel, null)
+    // Inject a close/back button at the top of settings
+    const backBtn = document.createElement('button')
+    backBtn.className = 'splash-settings-back'
+    backBtn.textContent = '← Back to projects'
+    backBtn.onclick = () => {
+      panel.classList.add('hidden')
+      const home = document.getElementById('splash-home')
+      if (home) { home.style.display = 'flex'; home.style.flexDirection = 'column'; home.style.flex = '1'; home.style.overflow = 'hidden' }
+      document.querySelectorAll('.splash-side-btn').forEach(b => b.classList.remove('active-nav'))
+    }
+    panel.insertBefore(backBtn, panel.firstChild)
   },
 
   _showNewForm() {

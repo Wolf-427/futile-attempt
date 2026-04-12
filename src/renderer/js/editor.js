@@ -139,24 +139,24 @@ const Editor = {
 
     // Font size control
     const fsSep = div(); tb.appendChild(fsSep)
-    const fsLabel = document.createElement('span')
-    fsLabel.style.cssText = 'font-size:11px;color:var(--tx3);margin-left:4px;'
-    fsLabel.textContent = 'Aa'
-    tb.appendChild(fsLabel)
-    const fsSlider = document.createElement('input')
-    fsSlider.type = 'range'; fsSlider.min = 14; fsSlider.max = 28; fsSlider.step = 1; fsSlider.value = 18
-    fsSlider.style.cssText = 'width:72px;margin:0 4px;'
-    fsSlider.title = 'Font size'
-    // Load saved font size
+    const fsSel = document.createElement('select')
+    fsSel.className = 'editor-page-sel'
+    fsSel.title = 'Font size'
+    ;[12, 14, 16, 18, 20, 22, 24, 28, 32].forEach(sz => {
+      const opt = document.createElement('option')
+      opt.value = sz; opt.textContent = `${sz}pt`
+      fsSel.appendChild(opt)
+    })
+    fsSel.value = 18
     api.store.get('editor-font-size').then(v => {
-      if (v) { fsSlider.value = v; this._content.style.fontSize = v + 'px' }
+      if (v) { fsSel.value = v; if (this._content) this._content.style.fontSize = v + 'px' }
     }).catch(() => {})
-    fsSlider.addEventListener('input', async () => {
-      const sz = fsSlider.value
-      this._content.style.fontSize = sz + 'px'
+    fsSel.addEventListener('change', async () => {
+      const sz = fsSel.value
+      if (this._content) this._content.style.fontSize = sz + 'px'
       await api.store.set('editor-font-size', sz)
     })
-    tb.appendChild(fsSlider)
+    tb.appendChild(fsSel)
   },
 
   _exec(cmd, arg) { document.execCommand(cmd, false, arg || null); this._content.focus() },
@@ -215,6 +215,17 @@ const Editor = {
     api.store.get('editor-font-size').then(v => {
       if (v && this._content) this._content.style.fontSize = v + 'px'
     }).catch(() => {})
+    // Auto-focus and place cursor at end
+    setTimeout(() => {
+      if (!this._content) return
+      this._content.focus()
+      const range = document.createRange()
+      const sel = window.getSelection()
+      range.selectNodeContents(this._content)
+      range.collapse(false)
+      sel.removeAllRanges()
+      sel.addRange(range)
+    }, 50)
   },
 
   async _save() {
