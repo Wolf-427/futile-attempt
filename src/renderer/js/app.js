@@ -1,5 +1,4 @@
 const App = {
-  _project: null,
 
   init() {
     Store.sub(['activeId', 'view', 'sidebar', 'boardFile', 'boardStack'], () => {
@@ -11,100 +10,131 @@ const App = {
   render() {
     const s = Store.get()
     const root = document.getElementById('app')
-    if (!s.activeId || !Store.project) { this.renderWelcome(root); return }
-    this._project = Store.project
-    this.renderWorkspace(root, this._project)
+    if (!s.activeId || !Store.project) { this.renderSplash(root); return }
+    this.renderWorkspace(root, Store.project)
   },
 
-  // ── Welcome / Splash ────────────────────────────────────────────────────────
+  // ── Splash ──────────────────────────────────────────────────────────────────
 
-  renderWelcome(root) {
+  async renderSplash(root) {
     const projects = Store.get('projects')
+    const version = await api.app.version().catch(() => '0.2.2-alpha')
+
+    // Load cover images for recent projects
+    const covers = {}
+    for (const p of projects) {
+      try {
+        const meta = await api.store.get(`project-cover-${p.id}`)
+        if (meta) covers[p.id] = meta
+      } catch {}
+    }
+
     root.innerHTML = `
       <div class="splash">
         <div class="splash-drag"></div>
-        <div class="splash-body">
 
-          <div class="splash-left">
-            <div class="splash-logo">
-              <div class="splash-logo-mark">S</div>
-              <div class="splash-logo-text">Scriptum</div>
-            </div>
-            <p class="splash-version">Version ${window._appVersion || '0.2.0'}</p>
-            <div class="splash-actions">
-              <button class="splash-action-btn" id="btn-new">
-                <span class="splash-action-icon">✦</span>
-                <span class="splash-action-label">New project</span>
-                <span class="splash-action-hint">Start from scratch</span>
-              </button>
-              <button class="splash-action-btn" id="btn-open">
-                <span class="splash-action-icon">⌂</span>
-                <span class="splash-action-label">Open project</span>
-                <span class="splash-action-hint">Browse for a folder</span>
-              </button>
-            </div>
-            <div id="splash-err" class="splash-err"></div>
-            <div id="splash-form" class="splash-form hidden">
-              <input class="splash-input" id="project-name" placeholder="Project name…" autocomplete="off"/>
-              <div class="splash-form-row">
-                <button class="splash-cancel" id="btn-cancel">Cancel</button>
-                <button class="splash-confirm" id="btn-create">Choose location →</button>
-              </div>
+        <div class="splash-top">
+          <div class="splash-brand">
+            <div class="splash-mark">S</div>
+            <div>
+              <div class="splash-name">Scriptum</div>
+              <div class="splash-ver">v${version}</div>
             </div>
           </div>
+          <div class="splash-btns">
+            <button class="splash-btn primary" id="btn-new">New project</button>
+            <button class="splash-btn" id="btn-open">Open project</button>
+          </div>
+        </div>
 
-          <div class="splash-right">
-            <div class="splash-recent-header">Recent projects</div>
-            ${projects.length === 0
-              ? `<div class="splash-no-recent">No recent projects yet</div>`
-              : [...projects].reverse().map(p => `
-                  <button class="splash-recent-item" data-id="${p.id}" data-dir="${p.dir}">
-                    <div class="splash-recent-icon">📁</div>
-                    <div class="splash-recent-info">
-                      <div class="splash-recent-name">${p.name}</div>
-                      <div class="splash-recent-path">${p.dir}</div>
+        <div id="splash-form" class="splash-form hidden">
+          <input class="splash-input" id="project-name" placeholder="Project name…" autocomplete="off"/>
+          <button class="splash-btn primary" id="btn-create">Choose folder →</button>
+          <button class="splash-btn" id="btn-cancel">Cancel</button>
+          <div id="splash-err" class="splash-err"></div>
+        </div>
+
+        <div class="splash-recent-wrap">
+          <div class="splash-recent-label">Recent</div>
+          ${projects.length === 0
+            ? `<div class="splash-empty">No recent projects</div>`
+            : `<div class="splash-cards">
+                ${[...projects].reverse().map(p => {
+                  const cover = covers[p.id]
+                  return `
+                    <div class="splash-card" data-id="${p.id}">
+                      <div class="splash-card-cover" data-id="${p.id}">
+                        ${cover
+                          ? `<img src="${cover}" class="splash-card-img" draggable="false"/>`
+                          : `<div class="splash-card-placeholder"><span>S</span></div>`
+                        }
+                        <button class="splash-card-cover-btn" data-id="${p.id}" title="Set cover image">⊡</button>
+                      </div>
+                      <div class="splash-card-footer">
+                        <div class="splash-card-name">${p.name}</div>
+                        <div class="splash-card-path">${p.dir.split('/').slice(-2).join('/')}</div>
+                      </div>
                     </div>
-                    <div class="splash-recent-arrow">›</div>
-                  </button>
-                `).join('')
-            }
-          </div>
-
+                  `
+                }).join('')}
+              </div>`
+          }
         </div>
       </div>
     `
 
-    // Bind
+    // Bind actions
     document.getElementById('btn-new').onclick = () => this._showNewForm()
     document.getElementById('btn-open').onclick = () => this.openProject()
-    document.querySelectorAll('.splash-recent-item').forEach(btn => {
-      btn.onclick = () => Store.set('activeId', btn.dataset.id)
+
+    // Open project cards
+    document.querySelectorAll('.splash-card').forEach(card => {
+      card.addEventListener('click', e => {
+        if (e.target.closest('.splash-card-cover-btn')) return
+        Store.set('activeId', card.dataset.id)
+      })
     })
 
-    // Load version
-    api.app.version().then(v => {
-      window._appVersion = v
-      const el = document.querySelector('.splash-version')
-      if (el) el.textContent = `Version ${v}`
-    }).catch(() => {})
+    // Cover image buttons
+    document.querySelectorAll('.splash-card-cover-btn').forEach(btn => {
+      btn.addEventListener('click', async e => {
+        e.stopPropagation()
+        const id = btn.dataset.id
+        const fp = await api.dialog.file([{ name: 'Images', extensions: ['jpg','jpeg','png','webp','gif'] }])
+        if (!fp) return
+        // Read as base64 and store
+        const b64 = await api.fs.readBin(fp)
+        const src = `data:image/jpeg;base64,${b64}`
+        await api.store.set(`project-cover-${id}`, src)
+        // Update UI immediately
+        const coverEl = document.querySelector(`.splash-card-cover[data-id="${id}"]`)
+        if (coverEl) {
+          coverEl.querySelector('.splash-card-placeholder,.splash-card-img')?.remove()
+          const img = document.createElement('img')
+          img.src = src; img.className = 'splash-card-img'; img.draggable = false
+          coverEl.prepend(img)
+        }
+      })
+    })
   },
 
   _showNewForm() {
-    document.getElementById('splash-form').classList.remove('hidden')
+    const form = document.getElementById('splash-form')
+    form.classList.remove('hidden')
     document.getElementById('project-name').focus()
-    document.getElementById('btn-new').style.opacity = '0.4'
-    document.getElementById('btn-open').style.opacity = '0.4'
+    document.getElementById('btn-new').disabled = true
+    document.getElementById('btn-open').disabled = true
     document.getElementById('btn-cancel').onclick = () => {
-      document.getElementById('splash-form').classList.add('hidden')
+      form.classList.add('hidden')
       document.getElementById('project-name').value = ''
-      document.getElementById('btn-new').style.opacity = ''
-      document.getElementById('btn-open').style.opacity = ''
+      document.getElementById('btn-new').disabled = false
+      document.getElementById('btn-open').disabled = false
     }
     document.getElementById('btn-create').onclick = () => this.createProject()
-    document.getElementById('project-name').addEventListener('keydown', e => {
+    document.getElementById('project-name').onkeydown = e => {
       if (e.key === 'Enter') this.createProject()
       if (e.key === 'Escape') document.getElementById('btn-cancel').click()
-    })
+    }
   },
 
   async createProject() {
@@ -114,7 +144,7 @@ const App = {
     btn.textContent = 'Creating…'; btn.disabled = true
     try {
       const folder = await api.dialog.folder()
-      if (!folder) { btn.textContent = 'Choose location →'; btn.disabled = false; return }
+      if (!folder) { btn.textContent = 'Choose folder →'; btn.disabled = false; return }
       const p = await Project.create(name, folder)
       Store._data.projects = [...Store.get('projects'), { id: p.id, name: p.name, dir: p.dir }]
       Store.save()
@@ -122,26 +152,21 @@ const App = {
     } catch (e) {
       const err = document.getElementById('splash-err')
       if (err) err.textContent = e.message
-      btn.textContent = 'Choose location →'; btn.disabled = false
+      btn.textContent = 'Choose folder →'; btn.disabled = false
     }
   },
 
   async openProject() {
-    const btn = document.getElementById('btn-open')
-    btn.style.opacity = '0.4'
     try {
       const folder = await api.dialog.folder()
-      if (!folder) { btn.style.opacity = ''; return }
+      if (!folder) return
       const p = await Project.open(folder)
       const existing = Store.get('projects').find(x => x.dir === folder)
       if (existing) { Store.set('activeId', existing.id); return }
       Store._data.projects = [...Store.get('projects'), { id: p.id, name: p.name, dir: p.dir }]
       Store.save()
       Store.set('activeId', p.id)
-    } catch (e) {
-      alert(e.message)
-      btn.style.opacity = ''
-    }
+    } catch (e) { alert(e.message) }
   },
 
   // ── Workspace ────────────────────────────────────────────────────────────────
@@ -160,19 +185,19 @@ const App = {
           </button>
           <span class="project-name">${project.name}</span>
           <div class="nav-group">
-            <button class="nav-btn ${s.view === 'editor'   ? 'active' : ''}" data-view="editor">Editor</button>
-            <button class="nav-btn ${s.view === 'board'    ? 'active' : ''}" data-view="board">Canvas</button>
-            <button class="nav-btn ${s.view === 'settings' ? 'active' : ''}" data-view="settings">Settings</button>
+            <button class="nav-btn ${s.view==='editor'   ?'active':''}" data-view="editor">Editor</button>
+            <button class="nav-btn ${s.view==='board'    ?'active':''}" data-view="board">Canvas</button>
+            <button class="nav-btn ${s.view==='settings' ?'active':''}" data-view="settings">Settings</button>
           </div>
           <div class="spacer"></div>
           <div class="git-area">
             <span class="git-branch">⎇ ${s.git.branch}</span>
-            <span class="git-dot ${s.git.dirty ? 'dirty' : 'clean'}" title="${s.git.dirty ? 'Unsaved changes' : 'All saved'}"></span>
-            <button class="titlebar-close-project" id="close-project" title="Close project">Close project</button>
+            <span class="git-dot ${s.git.dirty?'dirty':'clean'}" title="${s.git.dirty?'Unsaved':'All saved'}"></span>
+            <button class="titlebar-close-project" id="close-project">Close project</button>
           </div>
         </div>
         <div class="body">
-          <div id="sidebar-container" ${!s.sidebar || s.view === 'settings' ? 'class="hidden"' : ''}></div>
+          <div id="sidebar-container" ${!s.sidebar||s.view==='settings'?'class="hidden"':''}></div>
           <main class="main" id="main-content"></main>
         </div>
       </div>
@@ -183,19 +208,13 @@ const App = {
         if (Store.get('view') !== btn.dataset.view) Store.set('view', btn.dataset.view)
       })
     })
-    document.getElementById('toggle-sidebar').addEventListener('click', () => {
-      Store.set('sidebar', !Store.get('sidebar'))
-    })
+    document.getElementById('toggle-sidebar').addEventListener('click', () => Store.set('sidebar', !Store.get('sidebar')))
     document.getElementById('close-project').addEventListener('click', () => {
-      Store._data.activeId = null
-      Store._data.docPath = null
-      Store._data.boardStack = []
-      Store.save()
-      Store._notify('activeId')
+      Store._data.activeId = null; Store._data.docPath = null; Store._data.boardStack = []
+      Store.save(); Store._notify('activeId')
     })
 
     if (s.sidebar && s.view !== 'settings') this.renderSidebar(project)
-
     const main = document.getElementById('main-content')
     if (s.view === 'editor')   this.renderEditor(main, project)
     if (s.view === 'board')    this.renderBoard(main, project)
@@ -223,8 +242,8 @@ const App = {
         await api.fs.write(p, `# ${name}\n\n`)
         Store._data.docPath = p; Store.save(); Store.set('view', 'editor')
       }
-      inp.addEventListener('keydown', e => { if (e.key === 'Enter') finish(); if (e.key === 'Escape') { inp.remove(); addingDoc = false } })
-      inp.addEventListener('blur', () => { if (addingDoc) { inp.remove(); addingDoc = false } })
+      inp.addEventListener('keydown', e => { if (e.key==='Enter') finish(); if (e.key==='Escape') { inp.remove(); addingDoc=false } })
+      inp.addEventListener('blur', () => { if (addingDoc) { inp.remove(); addingDoc=false } })
     }
     docsHdr.appendChild(docsLbl); docsHdr.appendChild(addDocBtn); docsSection.appendChild(docsHdr)
     const docTree = document.createElement('div'); docsSection.appendChild(docTree)
@@ -236,12 +255,12 @@ const App = {
     const addBoardBtn = document.createElement('button'); addBoardBtn.className = 'sidebar-add'; addBoardBtn.textContent = '+'
     addBoardBtn.onclick = async () => {
       const boards = await Project.readBoards(project.dir)
-      const b = await Project.newBoard(project.dir, `Board ${boards.filter(x => !x.isMaster).length + 1}`)
+      const b = await Project.newBoard(project.dir, `Board ${boards.filter(x=>!x.isMaster).length+1}`)
       this.openBoard(b.file)
     }
     boardsHdr.appendChild(boardsLbl); boardsHdr.appendChild(addBoardBtn); boardsSection.appendChild(boardsHdr)
     const masterBtn = document.createElement('button')
-    masterBtn.className = 'sidebar-row' + (s.view === 'board' && s.boardFile === 'master.json' ? ' board-active' : '')
+    masterBtn.className = 'sidebar-row'+(s.view==='board'&&s.boardFile==='master.json'?' board-active':'')
     masterBtn.textContent = '◎ Master board'
     masterBtn.onclick = () => this.openBoard('master.json', false)
     boardsSection.appendChild(masterBtn); container.appendChild(boardsSection)
@@ -253,13 +272,13 @@ const App = {
     footer.appendChild(pathBtn); container.appendChild(footer)
 
     Project.readDocs(project.dir).then(docs => {
-      if (!docs.length) { const e = document.createElement('span'); e.className = 'sidebar-empty'; e.textContent = 'No documents yet'; docTree.appendChild(e); return }
+      if (!docs.length) { const e=document.createElement('span'); e.className='sidebar-empty'; e.textContent='No documents yet'; docTree.appendChild(e); return }
       docs.forEach(n => this._docNode(n, docTree, s.docPath))
     })
     Project.readBoards(project.dir).then(boards => {
-      boards.filter(b => !b.isMaster).forEach(b => {
+      boards.filter(b=>!b.isMaster).forEach(b => {
         const btn = document.createElement('button')
-        btn.className = 'sidebar-row' + (s.view === 'board' && s.boardFile === b.file ? ' board-active' : '')
+        btn.className = 'sidebar-row'+(s.view==='board'&&s.boardFile===b.file?' board-active':'')
         btn.innerHTML = `⊞ <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${b.name}</span><span class="board-count">${(b.nodes||[]).length}</span>`
         btn.onclick = () => this.openBoard(b.file, false)
         boardsSection.appendChild(btn)
@@ -270,23 +289,21 @@ const App = {
   _docNode(node, container, activePath) {
     const btn = document.createElement('button')
     if (node.type === 'file') {
-      btn.className = 'sidebar-row' + (activePath === node.path ? ' active' : '')
+      btn.className = 'sidebar-row'+(activePath===node.path?' active':'')
       btn.textContent = `📄 ${node.name}`
       btn.onclick = () => {
         Store._data.docPath = node.path; Store.save()
-        if (Store.get('view') === 'editor') {
+        if (Store.get('view')==='editor') {
           Editor.loadDoc(node.path)
-          document.querySelectorAll('.sidebar-row.active').forEach(el => el.classList.remove('active'))
+          document.querySelectorAll('.sidebar-row.active').forEach(el=>el.classList.remove('active'))
           btn.classList.add('active')
-        } else {
-          Store.set('view', 'editor')
-        }
+        } else { Store.set('view','editor') }
       }
       container.appendChild(btn)
     } else {
       btn.className = 'sidebar-row'; btn.textContent = `▾ 📁 ${node.name}`
       container.appendChild(btn)
-      const sub = document.createElement('div'); sub.style.paddingLeft = '14px'
+      const sub = document.createElement('div'); sub.style.paddingLeft='14px'
       node.children.forEach(c => this._docNode(c, sub, activePath))
       container.appendChild(sub)
       btn.onclick = () => sub.classList.toggle('hidden')
@@ -295,7 +312,7 @@ const App = {
 
   renderEditor(container, project) {
     const docPath = Store.get('docPath')
-    if (!docPath) { container.innerHTML = '<div class="editor-empty">Select a document from the sidebar</div>'; return }
+    if (!docPath) { container.innerHTML='<div class="editor-empty">Select a document from the sidebar</div>'; return }
     Editor.mount(container); Editor.loadDoc(docPath)
   },
 
@@ -304,9 +321,9 @@ const App = {
     Canvas.mount(container, project.dir, Store.get('boardFile'))
   },
 
-  openBoard(file, push = true) {
+  openBoard(file, push=true) {
     if (push) { Store._data.boardStack = [...Store.get('boardStack'), Store.get('boardFile')] }
-    Store._data.boardFile = file; Store.save(); Store.set('view', 'board')
+    Store._data.boardFile = file; Store.save(); Store.set('view','board')
   }
 }
 
