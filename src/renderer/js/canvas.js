@@ -64,7 +64,7 @@ const Canvas = {
     this._zoom = 1; this._pan = { x: 80, y: 80 }
     this._mode = 'select'; this._drag = null; this._resize = null; this._marquee = null
     this._selected = new Set(); this._connecting = null; this._panning = false
-    this._history = []; this._histIdx = -1
+    this._history = []; this._histIdx = -1; this._previewGroup = null
 
     container.innerHTML = `
       <div class="canvas-wrap">
@@ -205,13 +205,45 @@ const Canvas = {
           if (node) { node.x=Math.round(wx-this._drag.offX); node.y=Math.round(wy-this._drag.offY); const el=document.getElementById(`pin-${node.id}`); if(el){el.style.left=node.x+'px';el.style.top=node.y+'px'} }
         }
         this._renderArrows()
-        // Highlight group if node is hovering over it
+        // Live-preview group expansion while dragging a node over it
         if (this._drag.type === 'node') {
           const node = this._board.nodes.find(n => n.id === this._drag.id)
+          // Clear all highlights first
           document.querySelectorAll('.group-drop-target').forEach(el => el.classList.remove('group-drop-target'))
+          // Restore any previously previewed group
+          if (this._previewGroup) {
+            const gel = document.getElementById(`pin-${this._previewGroup.id}`)
+            if (gel) {
+              gel.style.left   = this._previewGroup.origX + 'px'
+              gel.style.top    = this._previewGroup.origY + 'px'
+              gel.style.width  = this._previewGroup.origW + 'px'
+              gel.style.height = this._previewGroup.origH + 'px'
+            }
+            this._previewGroup = null
+          }
           if (node && node.type !== 'group') {
             const hovered = this._groupAt(node)
-            if (hovered) document.getElementById(`pin-${hovered.id}`)?.classList.add('group-drop-target')
+            if (hovered && !hovered.members?.includes(node.id)) {
+              // Save original bounds for restore
+              this._previewGroup = { id: hovered.id, origX: hovered.x, origY: hovered.y, origW: hovered.width, origH: hovered.height }
+              // Compute what the group would look like with this node included
+              const PAD = 32
+              const members = (hovered.members || [])
+                .map(id => this._board.nodes.find(n => n.id === id)).filter(Boolean)
+              members.push(node)
+              const preX = Math.min(...members.map(n => n.x)) - PAD
+              const preY = Math.min(...members.map(n => n.y)) - PAD - 28
+              const preW = Math.max(...members.map(n => n.x + (n.width  || 220))) + PAD - preX
+              const preH = Math.max(...members.map(n => n.y + (n.height || 160))) + PAD - preY
+              const gel = document.getElementById(`pin-${hovered.id}`)
+              if (gel) {
+                gel.classList.add('group-drop-target')
+                gel.style.left   = preX + 'px'
+                gel.style.top    = preY + 'px'
+                gel.style.width  = preW + 'px'
+                gel.style.height = preH + 'px'
+              }
+            }
           }
         }
         return
@@ -240,8 +272,18 @@ const Canvas = {
 
     window.addEventListener('mouseup', () => {
       this._area.style.cursor = 'default'
-      // Always clear hover highlight
+      // Clear highlight and restore any live preview before computing membership
       document.querySelectorAll('.group-drop-target').forEach(el => el.classList.remove('group-drop-target'))
+      if (this._previewGroup) {
+        const gel = document.getElementById(`pin-${this._previewGroup.id}`)
+        if (gel) {
+          gel.style.left   = this._previewGroup.origX + 'px'
+          gel.style.top    = this._previewGroup.origY + 'px'
+          gel.style.width  = this._previewGroup.origW + 'px'
+          gel.style.height = this._previewGroup.origH + 'px'
+        }
+        this._previewGroup = null
+      }
 
       if (this._panning) { this._panning = false; return }
 

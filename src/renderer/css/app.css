@@ -480,3 +480,11 @@ input[type=range].editor-font-size::-webkit-slider-thumb { -webkit-appearance: n
   background: rgba(201,169,110,0.12) !important;
   box-shadow: 0 0 0 2px rgba(201,169,110,0.3);
 }
+
+/* Live group preview — smooth resize animation */
+.group-drop-target {
+  transition: left 0.12s ease, top 0.12s ease, width 0.12s ease, height 0.12s ease !important;
+  border-color: rgba(201,169,110,0.95) !important;
+  background: rgba(201,169,110,0.1) !important;
+  box-shadow: 0 0 0 2px rgba(201,169,110,0.25), inset 0 0 20px rgba(201,169,110,0.05) !important;
+}
