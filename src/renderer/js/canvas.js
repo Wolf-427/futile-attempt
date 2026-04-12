@@ -367,6 +367,9 @@ const Canvas = {
     if (e.button!==0) return; e.stopPropagation()
     const r=this._area.getBoundingClientRect()
     const wx=(e.clientX-r.left-this._pan.x)/this._zoom, wy=(e.clientY-r.top-this._pan.y)/this._zoom
+    // Select group (shift = add to selection, no shift = replace)
+    if (!e.shiftKey && !this._selected.has(group.id)) this._clearSelection()
+    this._selectNode(group.id)
     this._drag={type:'group', id:group.id, offX:wx-group.x, offY:wy-group.y}
   },
 
@@ -380,17 +383,30 @@ const Canvas = {
   _selectNode(id) {
     this._selected.add(id)
     const el = document.getElementById(`pin-${id}`)
-    if (el) el.classList.add('pin-selected')
-    // If selecting a group, highlight all its members too
+    if (!el) return
     const node = this._board?.nodes?.find(n => n.id === id)
     if (node?.type === 'group') {
-      for (const mid of (node.members || [])) {
-        this._selected.add(mid)
-        document.getElementById(`pin-${mid}`)?.classList.add('pin-selected')
-      }
+      // Groups use inline style — override border and background directly
+      el.style.border = '2px solid rgba(201,169,110,0.95)'
+      el.style.background = 'rgba(201,169,110,0.12)'
+      el.style.boxShadow = '0 0 0 3px rgba(201,169,110,0.3)'
+    } else {
+      el.classList.add('pin-selected')
     }
   },
-  _deselectNode(id) { this._selected.delete(id); document.getElementById(`pin-${id}`)?.classList.remove('pin-selected') },
+  _deselectNode(id) {
+    this._selected.delete(id)
+    const el = document.getElementById(`pin-${id}`)
+    if (!el) return
+    const node = this._board?.nodes?.find(n => n.id === id)
+    if (node?.type === 'group') {
+      el.style.border = '2px solid rgba(201,169,110,0.5)'
+      el.style.background = 'rgba(201,169,110,0.05)'
+      el.style.boxShadow = ''
+    } else {
+      el.classList.remove('pin-selected')
+    }
+  },
   _clearSelection() { [...this._selected].forEach(id=>this._deselectNode(id)); this._selected.clear() },
 
   // ── GROUPING ──────────────────────────────────────────────────────────────
@@ -482,16 +498,21 @@ const Canvas = {
     const selectedGroups = selectedNodes.filter(n => n.type === 'group')
     const selectedPins   = selectedNodes.filter(n => n.type !== 'group')
 
-    // If exactly one group is selected alongside other pins → add pins to that group
+    // If exactly one group is selected alongside other pins → add those pins to the group
     if (selectedGroups.length === 1 && selectedPins.length >= 1) {
       const group = selectedGroups[0]
+      let added = 0
       for (const pin of selectedPins) {
-        if (!group.members.includes(pin.id)) group.members.push(pin.id)
+        if (!group.members.includes(pin.id)) { group.members.push(pin.id); added++ }
       }
-      this._recomputeGroup(group)
+      if (added > 0) {
+        this._recomputeGroup(group)
+        this._snapshot(); this._persist()
+        this._showHint(`Added ${added} pin${added>1?'s':''} to "${group.name}"`, 2000)
+      } else {
+        this._showHint('Those pins are already in the group.', 2000)
+      }
       this._clearSelection()
-      this._snapshot(); this._persist()
-      this._showHint(`Added ${selectedPins.length} pin${selectedPins.length>1?'s':''} to "${group.name}"`, 2000)
       return
     }
 
