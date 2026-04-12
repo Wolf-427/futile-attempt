@@ -412,6 +412,14 @@ const App = {
         btn.className = 'sidebar-row'+(s.view==='board'&&s.boardFile===b.file?' board-active':'')
         btn.innerHTML = `⊞ <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${b.name}</span><span class="board-count">${(b.nodes||[]).length}</span>`
         btn.onclick = () => this.openBoard(b.file, false)
+        // Make draggable onto master board canvas
+        btn.draggable = true
+        btn.addEventListener('dragstart', e => {
+          e.dataTransfer.setData('text/board-file', b.file)
+          e.dataTransfer.setData('text/board-name', b.name)
+          e.dataTransfer.effectAllowed = 'link'
+        })
+        btn.title = 'Click to open · Drag onto canvas to pin'
         boardsSection.appendChild(btn)
       })
     })
