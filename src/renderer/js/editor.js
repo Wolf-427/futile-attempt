@@ -136,6 +136,27 @@ const Editor = {
 
     this._content.addEventListener('keyup', () => this._updateToolbar())
     this._content.addEventListener('mouseup', () => this._updateToolbar())
+
+    // Font size control
+    const fsSep = div(); tb.appendChild(fsSep)
+    const fsLabel = document.createElement('span')
+    fsLabel.style.cssText = 'font-size:11px;color:var(--tx3);margin-left:4px;'
+    fsLabel.textContent = 'Aa'
+    tb.appendChild(fsLabel)
+    const fsSlider = document.createElement('input')
+    fsSlider.type = 'range'; fsSlider.min = 14; fsSlider.max = 28; fsSlider.step = 1; fsSlider.value = 18
+    fsSlider.style.cssText = 'width:72px;margin:0 4px;'
+    fsSlider.title = 'Font size'
+    // Load saved font size
+    api.store.get('editor-font-size').then(v => {
+      if (v) { fsSlider.value = v; this._content.style.fontSize = v + 'px' }
+    }).catch(() => {})
+    fsSlider.addEventListener('input', async () => {
+      const sz = fsSlider.value
+      this._content.style.fontSize = sz + 'px'
+      await api.store.set('editor-font-size', sz)
+    })
+    tb.appendChild(fsSlider)
   },
 
   _exec(cmd, arg) { document.execCommand(cmd, false, arg || null); this._content.focus() },
@@ -190,6 +211,10 @@ const Editor = {
     this._updateCounts()
     this._updateToolbar()
     this._applyPageSize()
+    // Restore font size
+    api.store.get('editor-font-size').then(v => {
+      if (v && this._content) this._content.style.fontSize = v + 'px'
+    }).catch(() => {})
   },
 
   async _save() {

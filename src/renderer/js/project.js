@@ -49,6 +49,14 @@ const Project = {
     await api.fs.write(`${dir}/boards/${file}`, JSON.stringify({ ...data, updated: Date.now() }, null, 2))
   },
 
+  templates: {
+    blank:   { label: 'Blank', content: '# {name}\n\n' },
+    chapter: { label: 'Chapter', content: '# Chapter {name}\n\n## Scene 1\n\n\n\n## Notes\n\n' },
+    outline: { label: 'Outline', content: '# {name}\n\n## Act 1\n\n- \n\n## Act 2\n\n- \n\n## Act 3\n\n- \n\n' },
+    scene:   { label: 'Scene', content: '# {name}\n\n**Location:** \n**Time:** \n**Characters:** \n\n---\n\n' },
+    notes:   { label: 'Notes', content: '# {name}\n\n## Key ideas\n\n## References\n\n## To-do\n\n' },
+  },
+
   async newBoard(dir, name) {
     const file = `${name.replace(/\s+/g, '-').toLowerCase()}-${Date.now()}.json`
     const data = { name, isMaster: false, nodes: [], updated: Date.now() }

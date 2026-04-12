@@ -1,5 +1,5 @@
 const Settings = {
-  async mount(container, project) {
+  async mount(container, project = null) {
     const version = await api.app.version().catch(() => '0.1.0')
     const token   = await api.store.get('gh-token').catch(() => null)
 

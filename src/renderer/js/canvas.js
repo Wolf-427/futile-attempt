@@ -5,12 +5,17 @@ const Canvas = {
   _dir: null, _file: null,
   _world: null, _area: null,
 
+  _arrowMode: false,
+  _arrowFrom: null,
+
   mount(container, dir, file) {
     this._dir = dir; this._file = file; this._zoom = 1; this._pan = { x: 80, y: 80 }
+    this._arrowMode = false; this._arrowFrom = null
     container.innerHTML = `
       <div class="canvas-wrap">
         <div class="canvas-toolbar" id="canvas-tb"></div>
         <div class="canvas-area" id="canvas-area">
+          <svg class="canvas-arrows" id="canvas-arrows"></svg>
           <div class="canvas-world" id="canvas-world"></div>
         </div>
         <div class="canvas-hint">Alt+drag or middle-click to pan · Scroll to zoom · Drop images onto canvas</div>
@@ -38,6 +43,19 @@ const Canvas = {
       const dot = document.createElement('button'); dot.className = 'canvas-color-dot'; dot.style.background = bg; dot.style.borderColor = b; dot.title = `${c} note`; dot.onclick = () => this._addNote(c); tb.appendChild(dot)
     })
     const sub = document.createElement('button'); sub.className = 'canvas-tool'; sub.textContent = '⊞ Sub-board'; sub.onclick = () => this._addSubBoard(); tb.appendChild(sub)
+
+    const arrBtn = document.createElement('button')
+    arrBtn.className = 'canvas-tool'; arrBtn.id = 'arrow-btn'; arrBtn.textContent = '↗ Connect'
+    arrBtn.title = 'Connect two pins with an arrow'
+    arrBtn.onclick = () => {
+      this._arrowMode = !this._arrowMode
+      this._arrowFrom = null
+      arrBtn.style.background = this._arrowMode ? 'var(--accent)' : ''
+      arrBtn.style.color = this._arrowMode ? '#0f0f0d' : ''
+      arrBtn.style.border = this._arrowMode ? 'none' : ''
+      this._area.style.cursor = this._arrowMode ? 'crosshair' : 'grab'
+    }
+    tb.appendChild(arrBtn)
     const sp = document.createElement('div'); sp.style.flex = '1'; tb.appendChild(sp)
     const zm = document.createElement('span'); zm.id = 'canvas-zoom'; zm.style.cssText = 'font-size:11px;color:var(--tx3);font-family:var(--mono);'; zm.textContent = `${Math.round(this._zoom * 100)}%`; tb.appendChild(zm)
     ;[['−', -0.1], ['⌂', null], ['+', 0.1]].forEach(([label, delta]) => {
@@ -68,7 +86,7 @@ const Canvas = {
       if (node) { node.x = Math.round(x); node.y = Math.round(y); const el = document.getElementById(`pin-${node.id}`); if (el) { el.style.left = `${node.x}px`; el.style.top = `${node.y}px` } }
     }
   },
-  _onMU() { this._panning = false; if (this._drag) { this._persist(); this._drag = null } },
+  _onMU() { this._panning = false; if (this._drag) { this._persist(); this._drag = null; this._renderArrows() } },
   _onWheel(e) { e.preventDefault(); this._zoom = Math.min(3, Math.max(0.15, this._zoom - e.deltaY * 0.001 * this._zoom)); this._updateTransform(); const zm = document.getElementById('canvas-zoom'); if (zm) zm.textContent = `${Math.round(this._zoom * 100)}%` },
   async _onDrop(e) {
     e.preventDefault()
@@ -104,7 +122,48 @@ const Canvas = {
   },
 
   async _persist() { await Project.saveBoard(this._dir, this._file, this._board); Store.patch('git', { dirty: true }) },
-  _renderAll() { this._world.innerHTML = ''; this._board.nodes.forEach(n => this._renderNode(n)) },
+  _renderAll() {
+    this._world.innerHTML = ''
+    this._board.nodes.forEach(n => this._renderNode(n))
+    this._renderArrows()
+  },
+
+  _renderArrows() {
+    const svg = document.getElementById('canvas-arrows')
+    if (!svg) return
+    svg.innerHTML = ''
+    svg.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:visible;'
+    const arrows = this._board.arrows || []
+    arrows.forEach(a => {
+      const fromEl = document.getElementById(`pin-${a.from}`)
+      const toEl   = document.getElementById(`pin-${a.to}`)
+      if (!fromEl || !toEl) return
+      const fr = fromEl.getBoundingClientRect()
+      const tr = toEl.getBoundingClientRect()
+      const ar = this._area.getBoundingClientRect()
+      const x1 = (fr.left + fr.width/2  - ar.left)
+      const y1 = (fr.top  + fr.height/2 - ar.top)
+      const x2 = (tr.left + tr.width/2  - ar.left)
+      const y2 = (tr.top  + tr.height/2 - ar.top)
+      const line = document.createElementNS('http://www.w3.org/2000/svg','line')
+      line.setAttribute('x1', x1); line.setAttribute('y1', y1)
+      line.setAttribute('x2', x2); line.setAttribute('y2', y2)
+      line.setAttribute('stroke', 'rgba(201,169,110,0.6)')
+      line.setAttribute('stroke-width', '1.5')
+      line.setAttribute('marker-end', 'url(#arrowhead)')
+      svg.appendChild(line)
+    })
+    // Arrowhead marker
+    if (arrows.length > 0) {
+      const defs = document.createElementNS('http://www.w3.org/2000/svg','defs')
+      const marker = document.createElementNS('http://www.w3.org/2000/svg','marker')
+      marker.setAttribute('id','arrowhead'); marker.setAttribute('markerWidth','8'); marker.setAttribute('markerHeight','8')
+      marker.setAttribute('refX','6'); marker.setAttribute('refY','3'); marker.setAttribute('orient','auto')
+      const path = document.createElementNS('http://www.w3.org/2000/svg','path')
+      path.setAttribute('d','M0,0 L0,6 L8,3 z'); path.setAttribute('fill','rgba(201,169,110,0.8)')
+      marker.appendChild(path); defs.appendChild(marker); svg.insertBefore(defs, svg.firstChild)
+    }
+  },
   _renderNode(n) {
     document.getElementById(`pin-${n.id}`)?.remove()
     let el
@@ -117,6 +176,26 @@ const Canvas = {
   _dragHandle(el, n) {
     el.addEventListener('mousedown', e => {
       if (e.button !== 0) return; e.stopPropagation()
+      // Arrow connect mode
+      if (this._arrowMode) {
+        if (!this._arrowFrom) {
+          this._arrowFrom = n.id
+          el.style.outline = '2px solid var(--accent)'
+        } else if (this._arrowFrom !== n.id) {
+          // Create arrow
+          if (!this._board.arrows) this._board.arrows = []
+          const exists = this._board.arrows.some(a => a.from === this._arrowFrom && a.to === n.id)
+          if (!exists) {
+            this._board.arrows.push({ from: this._arrowFrom, to: n.id })
+            this._persist()
+          }
+          // Clear selection outline
+          document.querySelectorAll('[style*="outline"]').forEach(el => el.style.outline = '')
+          this._arrowFrom = null
+          this._renderArrows()
+        }
+        return
+      }
       const r = this._area.getBoundingClientRect()
       this._drag = n.id; this._off = { x: (e.clientX - r.left - this._pan.x) / this._zoom - n.x, y: (e.clientY - r.top - this._pan.y) / this._zoom - n.y }
     })

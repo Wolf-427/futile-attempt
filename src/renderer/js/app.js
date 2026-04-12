@@ -4,7 +4,25 @@ const App = {
     Store.sub(['activeId', 'view', 'sidebar', 'boardFile', 'boardStack'], () => {
       this.render()
     })
+    this._bindGlobalKeys()
     this.render()
+  },
+
+  _bindGlobalKeys() {
+    document.addEventListener('keydown', async e => {
+      if (!e.metaKey && !e.ctrlKey) return
+      if (e.key === 'n') { e.preventDefault(); this._handleNewProject() }
+      if (e.key === 'o') { e.preventDefault(); this.openProject() }
+    })
+  },
+
+  _handleNewProject() {
+    const s = Store.get()
+    if (!s.activeId) {
+      // On splash — show new form
+      this._showNewForm()
+    }
+    // Inside workspace — could add new doc here in future
   },
 
   render() {
@@ -18,34 +36,35 @@ const App = {
 
   async renderSplash(root) {
     const projects = Store.get('projects')
-    const version = await api.app.version().catch(() => '0.2.3-alpha')
-    // Render immediately with placeholder covers, then async-inject images
-    const covers = {}
+    const version = await api.app.version().catch(() => '0.3.0-alpha')
 
     root.innerHTML = `
       <div class="splash">
         <div class="splash-drag"></div>
         <div class="splash-layout">
 
-          <!-- Left sidebar -->
           <div class="splash-sidebar">
             <div class="splash-logo">
               <div class="splash-mark">S</div>
               <div class="splash-wordmark">Scriptum</div>
             </div>
             <div class="splash-ver">v${version}</div>
-
             <div class="splash-divider"></div>
-
             <button class="splash-side-btn primary" id="btn-new">
               <span class="splash-side-icon">+</span>
               New project
+              <span class="splash-side-kbd">⌘N</span>
             </button>
             <button class="splash-side-btn" id="btn-open">
               <span class="splash-side-icon">⌂</span>
               Open project
+              <span class="splash-side-kbd">⌘O</span>
             </button>
-
+            <div class="splash-divider" style="margin-top:auto"></div>
+            <button class="splash-side-btn" id="btn-settings">
+              <span class="splash-side-icon">⚙</span>
+              Settings
+            </button>
             <div id="splash-form" class="splash-form hidden">
               <input class="splash-input" id="project-name" placeholder="Project name…" autocomplete="off"/>
               <div class="splash-form-row">
@@ -56,49 +75,90 @@ const App = {
             </div>
           </div>
 
-          <!-- Main area -->
           <div class="splash-main">
-            <div class="splash-welcome" id="splash-welcome"></div>
-
-            <div class="splash-main-header">
-              <div class="splash-main-title">Recent projects</div>
+            <div id="splash-settings-panel" class="hidden"></div>
+            <div id="splash-home" style="display:flex;flex-direction:column;flex:1;overflow:hidden">
+              <div class="splash-welcome" id="splash-welcome"></div>
+              <div class="splash-main-header">
+                <div class="splash-main-title">Recent projects</div>
+              </div>
+              ${projects.length === 0
+                ? `<div class="splash-empty">No recent projects yet.<br>Create your first project to get started.</div>`
+                : `<div class="splash-grid">
+                    ${[...projects].reverse().map((p, i) => `
+                      <div class="splash-card" data-id="${p.id}" data-index="${i}">
+                        <div class="splash-card-thumb">
+                          <div class="splash-card-empty" id="cover-${p.id}"><span>S</span></div>
+                          <button class="splash-card-set-cover" data-id="${p.id}" title="Set cover image">Set cover</button>
+                          <button class="splash-card-remove" data-id="${p.id}" title="Remove from recents">✕</button>
+                        </div>
+                        <div class="splash-card-meta">
+                          <div class="splash-card-name" title="${p.name}">${p.name}</div>
+                          <div class="splash-card-path" title="${p.dir}">${p.dir.split('/').slice(-2).join('/')}</div>
+                          ${p.updatedAt ? `<div class="splash-card-updated">${new Date(p.updatedAt).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'})}</div>` : ''}
+                        </div>
+                      </div>
+                    `).join('')}
+                  </div>`
+              }
             </div>
-
-            ${projects.length === 0
-              ? `<div class="splash-empty">No recent projects yet.<br>Create your first project to get started.</div>`
-              : `<div class="splash-grid">
-                  ${[...projects].reverse().map(p => `
-                    <div class="splash-card" data-id="${p.id}">
-                      <div class="splash-card-thumb">
-                        <div class="splash-card-empty" id="cover-${p.id}"><span>S</span></div>
-                        <button class="splash-card-set-cover" data-id="${p.id}" title="Set cover image">Set cover</button>
-                      </div>
-                      <div class="splash-card-meta">
-                        <div class="splash-card-name" title="${p.name}">${p.name}</div>
-                        <div class="splash-card-path" title="${p.dir}">${p.dir.split('/').slice(-2).join('/')}</div>
-                      </div>
-                    </div>
-                  `).join('')}
-                </div>`
-            }
           </div>
 
         </div>
       </div>
     `
 
-    // Bind
+    // Bind nav
     document.getElementById('btn-new').onclick = () => this._showNewForm()
     document.getElementById('btn-open').onclick = () => this.openProject()
+    document.getElementById('btn-settings').onclick = () => this._showSplashSettings()
 
+    // Open project cards
     document.querySelectorAll('.splash-card').forEach(card => {
       card.addEventListener('click', e => {
-        if (e.target.closest('.splash-card-set-cover')) return
-        Store.set('activeId', card.dataset.id)
+        if (e.target.closest('.splash-card-set-cover') || e.target.closest('.splash-card-remove')) return
+        const id = card.dataset.id
+        // Update last opened timestamp
+        Store._data.projects = Store.get('projects').map(p => p.id === id ? { ...p, updatedAt: Date.now() } : p)
+        Store.save()
+        Store.set('activeId', id)
       })
     })
 
-    // Rotating welcome messages
+    // Remove from recents
+    document.querySelectorAll('.splash-card-remove').forEach(btn => {
+      btn.addEventListener('click', async e => {
+        e.stopPropagation()
+        const id = btn.dataset.id
+        Store._data.projects = Store.get('projects').filter(p => p.id !== id)
+        Store.save()
+        // Remove card from DOM without full re-render
+        btn.closest('.splash-card').remove()
+        if (Store.get('projects').length === 0) {
+          document.querySelector('.splash-grid')?.replaceWith(
+            Object.assign(document.createElement('div'), { className: 'splash-empty', innerHTML: 'No recent projects yet.<br>Create your first project to get started.' })
+          )
+        }
+      })
+    })
+
+    // Set cover image
+    document.querySelectorAll('.splash-card-set-cover').forEach(btn => {
+      btn.addEventListener('click', async e => {
+        e.stopPropagation()
+        const id = btn.dataset.id
+        const fp = await api.dialog.file([{ name: 'Images', extensions: ['jpg','jpeg','png','webp','gif'] }])
+        if (!fp) return
+        await api.store.set(`project-cover-path-${id}`, fp)
+        const el = document.getElementById(`cover-${id}`)
+        const img = document.createElement('img')
+        img.src = `file://${fp}`; img.className = 'splash-card-img'; img.draggable = false
+        if (el) el.replaceWith(img)
+        else btn.closest('.splash-card-thumb').prepend(img)
+      })
+    })
+
+    // Welcome message rotation
     const messages = [
       'What are you writing today?',
       'Every great story begins with a single word.',
@@ -126,7 +186,7 @@ const App = {
       }, 5000)
     }
 
-    // Load covers async and inject without re-render
+    // Load covers async
     ;(async () => {
       for (const p of projects) {
         try {
@@ -135,36 +195,35 @@ const App = {
           const el = document.getElementById(`cover-${p.id}`)
           if (!el) continue
           const img = document.createElement('img')
-          img.src = `file://${coverPath}`
-          img.className = 'splash-card-img'
-          img.draggable = false
-          img.onerror = () => {} // silently ignore missing files
+          img.src = `file://${coverPath}`; img.className = 'splash-card-img'; img.draggable = false
+          img.onerror = () => {}
           el.replaceWith(img)
         } catch {}
       }
     })()
+  },
 
-    document.querySelectorAll('.splash-card-set-cover').forEach(btn => {
-      btn.addEventListener('click', async e => {
-        e.stopPropagation()
-        const id = btn.dataset.id
-        const fp = await api.dialog.file([{ name: 'Images', extensions: ['jpg','jpeg','png','webp','gif'] }])
-        if (!fp) return
-        // Store the file path directly — use file:// URL to display
-        await api.store.set(`project-cover-path-${id}`, fp)
-        const img = document.createElement('img')
-        img.src = `file://${fp}`
-        img.className = 'splash-card-img'
-        img.draggable = false
-        const thumb = btn.closest('.splash-card-thumb')
-        const existing = thumb.querySelector('.splash-card-empty, .splash-card-img')
-        if (existing) existing.replaceWith(img)
-        else thumb.prepend(img)
-      })
-    })
+  _showSplashHome() {
+    document.getElementById('splash-settings-panel')?.classList.add('hidden')
+    const home = document.getElementById('splash-home')
+    if (home) { home.style.display = 'flex'; home.style.flexDirection = 'column'; home.style.flex = '1'; home.style.overflow = 'hidden' }
+    document.querySelectorAll('.splash-side-btn').forEach(b => b.classList.remove('active-nav'))
+  },
+
+  _showSplashSettings() {
+    const home = document.getElementById('splash-home')
+    if (home) home.style.display = 'none'
+    const panel = document.getElementById('splash-settings-panel')
+    if (!panel) return
+    panel.classList.remove('hidden')
+    panel.style.cssText = 'flex:1;overflow-y:auto;'
+    document.querySelectorAll('.splash-side-btn').forEach(b => b.classList.remove('active-nav'))
+    document.getElementById('btn-settings')?.classList.add('active-nav')
+    Settings.mount(panel, null)
   },
 
   _showNewForm() {
+    this._showSplashHome()
     document.getElementById('splash-form').classList.remove('hidden')
     document.getElementById('project-name').focus()
     document.getElementById('btn-cancel').onclick = () => {
@@ -188,7 +247,7 @@ const App = {
       const folder = await api.dialog.folder()
       if (!folder) { btn.textContent = 'Choose folder →'; btn.disabled = false; return }
       const p = await Project.create(name, folder)
-      Store._data.projects = [...Store.get('projects'), { id: p.id, name: p.name, dir: p.dir }]
+      Store._data.projects = [...Store.get('projects'), { id: p.id, name: p.name, dir: p.dir, updatedAt: Date.now() }]
       Store.save()
       Store.set('activeId', p.id)
     } catch (e) {
@@ -205,7 +264,7 @@ const App = {
       const p = await Project.open(folder)
       const existing = Store.get('projects').find(x => x.dir === folder)
       if (existing) { Store.set('activeId', existing.id); return }
-      Store._data.projects = [...Store.get('projects'), { id: p.id, name: p.name, dir: p.dir }]
+      Store._data.projects = [...Store.get('projects'), { id: p.id, name: p.name, dir: p.dir, updatedAt: Date.now() }]
       Store.save()
       Store.set('activeId', p.id)
     } catch (e) { alert(e.message) }
@@ -215,6 +274,8 @@ const App = {
 
   renderWorkspace(root, project) {
     const s = Store.get()
+    // Restore last doc for this project
+    const lastDoc = s.docPath
     root.innerHTML = `
       <div class="workspace">
         <div class="titlebar">
@@ -252,7 +313,8 @@ const App = {
     })
     document.getElementById('toggle-sidebar').addEventListener('click', () => Store.set('sidebar', !Store.get('sidebar')))
     document.getElementById('close-project').addEventListener('click', () => {
-      Store._data.activeId = null; Store._data.docPath = null; Store._data.boardStack = []
+      // Save last doc before closing
+      Store._data.activeId = null; Store._data.boardStack = []
       Store.save(); Store._notify('activeId')
     })
 
@@ -278,11 +340,27 @@ const App = {
       const inp = document.createElement('input'); inp.className = 'sidebar-new-input'; inp.placeholder = 'Name…'
       docsSection.insertBefore(inp, docTree); inp.focus()
       const finish = async () => {
-        const name = inp.value.trim(); inp.remove(); addingDoc = false
-        if (!name) return
-        const p = `${project.dir}/documents/${name}.md`
-        await api.fs.write(p, `# ${name}\n\n`)
-        Store._data.docPath = p; Store.save(); Store.set('view', 'editor')
+        const name = inp.value.trim()
+        if (!name) { inp.remove(); addingDoc = false; return }
+        // Show template picker
+        inp.remove(); addingDoc = false
+        const picker = document.createElement('div')
+        picker.className = 'template-picker'
+        picker.innerHTML = `<div class="template-label">Template</div>`
+        Object.entries(Project.templates).forEach(([key, tmpl]) => {
+          const b = document.createElement('button')
+          b.className = 'template-btn'; b.textContent = tmpl.label
+          b.onclick = async () => {
+            picker.remove()
+            const p = `${project.dir}/documents/${name}.md`
+            const body = tmpl.content.replace(/\{name\}/g, name)
+            await api.fs.write(p, body)
+            Store._data.docPath = p; Store.save(); Store.set('view', 'editor')
+          }
+          picker.appendChild(b)
+        })
+        docsSection.insertBefore(picker, docTree)
+        setTimeout(() => { if (picker.parentNode) picker.remove() }, 8000)
       }
       inp.addEventListener('keydown', e => { if (e.key==='Enter') finish(); if (e.key==='Escape') { inp.remove(); addingDoc=false } })
       inp.addEventListener('blur', () => { if (addingDoc) { inp.remove(); addingDoc=false } })
@@ -315,7 +393,7 @@ const App = {
 
     Project.readDocs(project.dir).then(docs => {
       if (!docs.length) { const e=document.createElement('span'); e.className='sidebar-empty'; e.textContent='No documents yet'; docTree.appendChild(e); return }
-      docs.forEach(n => this._docNode(n, docTree, s.docPath))
+      docs.forEach(n => this._docNode(n, docTree, s.docPath, project))
     })
     Project.readBoards(project.dir).then(boards => {
       boards.filter(b=>!b.isMaster).forEach(b => {
@@ -328,11 +406,20 @@ const App = {
     })
   },
 
-  _docNode(node, container, activePath) {
-    const btn = document.createElement('button')
+  _docNode(node, container, activePath, project) {
     if (node.type === 'file') {
+      const btn = document.createElement('button')
       btn.className = 'sidebar-row'+(activePath===node.path?' active':'')
-      btn.textContent = `📄 ${node.name}`
+      btn.title = node.name
+
+      // Editable label
+      const lbl = document.createElement('span')
+      lbl.textContent = `📄 ${node.name}`
+      lbl.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+      btn.appendChild(lbl)
+      btn.style.cssText = 'display:flex;align-items:center;gap:6px;padding:5px 6px;border:none;border-radius:var(--r);width:100%;text-align:left;font-size:12.5px;background:transparent;color:var(--tx2);cursor:pointer;'
+      if (activePath===node.path) { btn.style.background='var(--bga)'; btn.style.color='var(--tx)' }
+
       btn.onclick = () => {
         Store._data.docPath = node.path; Store.save()
         if (Store.get('view')==='editor') {
@@ -341,12 +428,38 @@ const App = {
           btn.classList.add('active')
         } else { Store.set('view','editor') }
       }
+
+      // Double-click to rename
+      lbl.addEventListener('dblclick', e => {
+        e.stopPropagation()
+        const inp = document.createElement('input')
+        inp.value = node.name
+        inp.style.cssText = 'flex:1;background:var(--bg2);border:1px solid var(--accent);border-radius:var(--r);color:var(--tx);font-size:12.5px;padding:1px 4px;outline:none;width:100%;'
+        lbl.replaceWith(inp)
+        inp.focus(); inp.select()
+        const commit = async () => {
+          const newName = inp.value.trim()
+          if (newName && newName !== node.name) {
+            const newPath = node.path.replace(/[^/]+\.md$/, `${newName}.md`)
+            await api.fs.rename(node.path, newPath)
+            if (Store.get('docPath') === node.path) { Store._data.docPath = newPath; Store.save() }
+            node.path = newPath; node.name = newName
+          }
+          inp.replaceWith(lbl)
+          lbl.textContent = `📄 ${node.name}`
+        }
+        inp.addEventListener('blur', commit)
+        inp.addEventListener('keydown', e => { if (e.key==='Enter') { e.preventDefault(); inp.blur() } if (e.key==='Escape') { inp.replaceWith(lbl) } })
+        inp.addEventListener('mousedown', e => e.stopPropagation())
+      })
+
       container.appendChild(btn)
     } else {
+      const btn = document.createElement('button')
       btn.className = 'sidebar-row'; btn.textContent = `▾ 📁 ${node.name}`
       container.appendChild(btn)
       const sub = document.createElement('div'); sub.style.paddingLeft='14px'
-      node.children.forEach(c => this._docNode(c, sub, activePath))
+      node.children.forEach(c => this._docNode(c, sub, activePath, project))
       container.appendChild(sub)
       btn.onclick = () => sub.classList.toggle('hidden')
     }
