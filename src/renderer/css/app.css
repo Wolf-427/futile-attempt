@@ -100,8 +100,8 @@ textarea,input{font-family:var(--sans);}
 .editor-tool:hover{background:var(--bgh);color:var(--tx);}
 .editor-tool.active{background:var(--bga);color:var(--accent);}
 .editor-div{width:1px;height:16px;background:var(--b0);margin:0 4px;flex-shrink:0;}
-.editor-scroll{flex:1;overflow-y:auto;display:flex;justify-content:center;padding:48px 24px 80px;}
-.editor-page{width:100%;max-width:680px;}
+.editor-scroll{flex:1;overflow-y:auto;background:var(--bg);}
+.editor-pages{display:flex;flex-direction:column;align-items:center;padding:48px 0 80px;}
 .editor-empty{flex:1;display:flex;align-items:center;justify-content:center;color:var(--tx3);font-style:italic;}
 .editor-status{display:flex;gap:16px;padding:5px 20px;border-top:1px solid var(--b0);background:var(--bg1);font-size:11px;color:var(--tx3);flex-shrink:0;}
 .ProseMirror{outline:none;font-family:var(--serif);font-size:18px;line-height:1.8;color:var(--tx);caret-color:var(--accent);}
@@ -172,3 +172,8 @@ textarea,input{font-family:var(--sans);}
 
 .update-meta{font-size:13px;color:var(--tx2);margin-bottom:4px;font-family:var(--mono);}
 .update-date{font-size:11px;color:var(--tx3);margin-bottom:6px;}
+
+/* Page editor */
+.editor-page-sel{background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r);color:var(--tx2);font-family:var(--sans);font-size:12px;padding:3px 6px;outline:none;margin-left:4px;}
+.editor-page-sel:focus{border-color:var(--accent);}
+hr.page-break{border:none;border-top:2px dashed rgba(201,169,110,0.3);margin:0;width:100%;cursor:default;pointer-events:none;}
