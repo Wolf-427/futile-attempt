@@ -473,3 +473,10 @@ input[type=range].editor-font-size::-webkit-slider-thumb { -webkit-appearance: n
 /* ── Locked pins ───────────────────────────────────────────────────────────── */
 .pin-locked { opacity:0.7; cursor:not-allowed !important; }
 .pin-locked::after { content:'🔒'; position:absolute; top:4px; left:8px; font-size:9px; opacity:.5; pointer-events:none; }
+
+/* Group drop target highlight */
+.group-drop-target {
+  border-color: rgba(201,169,110,0.9) !important;
+  background: rgba(201,169,110,0.12) !important;
+  box-shadow: 0 0 0 2px rgba(201,169,110,0.3);
+}
