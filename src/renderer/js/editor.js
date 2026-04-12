@@ -10,6 +10,9 @@ const Editor = {
   },
   MARGIN: 80,
 
+  // Word-standard font sizes
+  FONT_SIZES: [8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72],
+
   async getPageSize() {
     try {
       const saved = await api.store.get('page-size')
@@ -38,139 +41,155 @@ const Editor = {
     this._buildToolbar()
     this._content.addEventListener('input', () => this._onInput())
     this._content.addEventListener('keydown', e => this._onKeydown(e))
+    this._content.addEventListener('keyup', () => this._updateToolbar())
+    this._content.addEventListener('mouseup', () => this._updateToolbar())
     this._applyPageSize()
-  },
-
-  async _applyPageSize() {
-    const pg = await this.getPageSize()
-    const wrap = document.getElementById('editor-page-wrap')
-    const content = this._content
-    if (!wrap || !content) return
-
-    wrap.style.cssText = `
-      width: ${pg.width}px;
-      min-height: ${pg.height}px;
-      background: #1c1c18;
-      border: 1px solid var(--b1);
-      border-radius: 2px;
-      box-shadow: 0 4px 24px rgba(0,0,0,0.5);
-      padding: ${this.MARGIN}px;
-      position: relative;
-    `
-
-    // Page break guide lines via background on the wrap
-    const lineH = pg.height - this.MARGIN * 2
-    wrap.style.backgroundImage = `repeating-linear-gradient(
-      to bottom,
-      transparent,
-      transparent ${lineH - 1}px,
-      rgba(255,255,255,0.07) ${lineH - 1}px,
-      rgba(255,255,255,0.07) ${lineH}px
-    )`
-    wrap.style.backgroundSize = `100% ${lineH}px`
-    wrap.style.backgroundPosition = `0 ${this.MARGIN}px`
-
-    // Content itself stays simple — no extra styles that block input
-    content.style.cssText = `outline: none; min-height: ${pg.height - this.MARGIN * 2}px;`
-
-    // Update page selector
-    const sel = document.getElementById('pg-sel')
-    if (sel) sel.value = pg.preset || 'a4'
-
-    this._updatePageCount(pg)
-  },
-
-  _updatePageCount(pg) {
-    if (!this._content) return
-    const lineH = pg.height - this.MARGIN * 2
-    const pages = Math.max(1, Math.ceil(this._content.scrollHeight / lineH))
-    const el = document.getElementById('page-count')
-    if (el) el.textContent = `${pages} ${pages === 1 ? 'page' : 'pages'}`
   },
 
   _buildToolbar() {
     const tb = document.getElementById('editor-toolbar')
+    tb.innerHTML = ''
 
-    const btn = (label, cmd, arg, title) => {
+    const btn = (label, action, activeCheck, title, mono) => {
       const b = document.createElement('button')
-      b.className = 'editor-tool'; b.textContent = label; b.title = title || label
-      b.dataset.cmd = cmd; b.dataset.arg = arg || ''
-      b.addEventListener('mousedown', e => { e.preventDefault(); this._exec(cmd, arg); this._updateToolbar() })
+      b.className = 'editor-tool'
+      b.innerHTML = label
+      b.title = title || label
+      if (mono) b.style.fontFamily = 'var(--mono)'
+      b.addEventListener('mousedown', e => {
+        e.preventDefault()
+        action()
+        this._updateToolbar()
+      })
+      b._activeCheck = activeCheck
       return b
     }
+
     const div = () => { const d = document.createElement('div'); d.className = 'editor-div'; return d }
 
-    ;[
-      btn('H1','formatBlock','h1'), btn('H2','formatBlock','h2'), btn('H3','formatBlock','h3'), div(),
-      btn('B','bold','','Bold ⌘B'), btn('I','italic','','Italic ⌘I'), btn('U','underline','','Underline ⌘U'), div(),
-      btn('❝','formatBlock','blockquote'), btn('•','insertUnorderedList'), btn('1.','insertOrderedList'), div(),
-    ].forEach(el => tb.appendChild(el))
+    // Font size dropdown (Word sizes)
+    const fsSel = document.createElement('select')
+    fsSel.className = 'editor-page-sel'
+    fsSel.title = 'Font size'
+    fsSel.style.width = '58px'
+    this.FONT_SIZES.forEach(sz => {
+      const opt = document.createElement('option')
+      opt.value = sz; opt.textContent = sz
+      fsSel.appendChild(opt)
+    })
+    fsSel.value = 12
+    api.store.get('editor-font-size').then(v => {
+      if (v) { fsSel.value = v; if (this._content) this._content.style.fontSize = v + 'pt' }
+    }).catch(() => {})
+    fsSel.addEventListener('change', async () => {
+      if (this._content) this._content.style.fontSize = fsSel.value + 'pt'
+      await api.store.set('editor-font-size', fsSel.value)
+    })
+    tb.appendChild(fsSel)
+    tb.appendChild(div())
 
-    // Page break button
-    const pbBtn = document.createElement('button')
-    pbBtn.className = 'editor-tool'; pbBtn.textContent = '⊟'; pbBtn.title = 'Insert page break (⌘↵)'
-    pbBtn.addEventListener('mousedown', e => { e.preventDefault(); this._insertPageBreak() })
+    // Headings
+    const hSel = document.createElement('select')
+    hSel.className = 'editor-page-sel'
+    hSel.title = 'Paragraph style'
+    hSel.style.width = '90px'
+    ;[['p','Normal'],['h1','Heading 1'],['h2','Heading 2'],['h3','Heading 3'],['blockquote','Quote']].forEach(([v,l]) => {
+      const opt = document.createElement('option'); opt.value = v; opt.textContent = l; hSel.appendChild(opt)
+    })
+    hSel.addEventListener('change', () => {
+      document.execCommand('formatBlock', false, hSel.value)
+      this._content.focus()
+    })
+    tb.appendChild(hSel)
+    tb.appendChild(div())
+
+    // Style buttons
+    const styleButtons = [
+      btn('<strong>B</strong>', () => document.execCommand('bold'), () => document.queryCommandState('bold'), 'Bold ⌘B'),
+      btn('<em>I</em>',        () => document.execCommand('italic'), () => document.queryCommandState('italic'), 'Italic ⌘I'),
+      btn('<u>U</u>',          () => document.execCommand('underline'), () => document.queryCommandState('underline'), 'Underline ⌘U'),
+      btn('<s>S</s>',          () => document.execCommand('strikeThrough'), () => document.queryCommandState('strikeThrough'), 'Strikethrough'),
+    ]
+    styleButtons.forEach(b => tb.appendChild(b))
+    tb.appendChild(div())
+
+    // Alignment
+    const alignButtons = [
+      btn('⬤⬤⬤⬤', () => document.execCommand('justifyLeft'),    () => document.queryCommandState('justifyLeft'),    'Align left ⌘⇧L'),
+      btn('◎◎◎◎', () => document.execCommand('justifyCenter'),  () => document.queryCommandState('justifyCenter'),  'Center ⌘⇧E'),
+      btn('⬤⬤⬤⬤', () => document.execCommand('justifyRight'),   () => document.queryCommandState('justifyRight'),   'Align right ⌘⇧R'),
+      btn('▬▬▬▬', () => document.execCommand('justifyFull'),    () => document.queryCommandState('justifyFull'),    'Justify ⌘⇧J'),
+    ]
+    // Better alignment icons
+    const alignIcons = ['≡','≡','≡','≡']
+    const alignLabels = [
+      '<svg width="14" height="11" viewBox="0 0 14 11" fill="currentColor"><rect y="0" width="14" height="1.5" rx=".75"/><rect y="3" width="10" height="1.5" rx=".75"/><rect y="6" width="14" height="1.5" rx=".75"/><rect y="9" width="8" height="1.5" rx=".75"/></svg>',
+      '<svg width="14" height="11" viewBox="0 0 14 11" fill="currentColor"><rect y="0" width="14" height="1.5" rx=".75"/><rect x="2" y="3" width="10" height="1.5" rx=".75"/><rect y="6" width="14" height="1.5" rx=".75"/><rect x="3" y="9" width="8" height="1.5" rx=".75"/></svg>',
+      '<svg width="14" height="11" viewBox="0 0 14 11" fill="currentColor"><rect y="0" width="14" height="1.5" rx=".75"/><rect x="4" y="3" width="10" height="1.5" rx=".75"/><rect y="6" width="14" height="1.5" rx=".75"/><rect x="6" y="9" width="8" height="1.5" rx=".75"/></svg>',
+      '<svg width="14" height="11" viewBox="0 0 14 11" fill="currentColor"><rect y="0" width="14" height="1.5" rx=".75"/><rect y="3" width="14" height="1.5" rx=".75"/><rect y="6" width="14" height="1.5" rx=".75"/><rect y="9" width="14" height="1.5" rx=".75"/></svg>',
+    ]
+    const alignCmds = ['justifyLeft','justifyCenter','justifyRight','justifyFull']
+    const alignTitles = ['Align left','Center','Align right','Justify']
+    alignCmds.forEach((cmd, i) => {
+      const b = btn(alignLabels[i], () => document.execCommand(cmd), () => document.queryCommandState(cmd), alignTitles[i])
+      b.style.padding = '4px 6px'
+      tb.appendChild(b)
+    })
+    tb.appendChild(div())
+
+    // Lists & indent
+    ;[
+      btn('•—', () => document.execCommand('insertUnorderedList'), () => document.queryCommandState('insertUnorderedList'), 'Bullet list'),
+      btn('1—', () => document.execCommand('insertOrderedList'),   () => document.queryCommandState('insertOrderedList'),   'Numbered list'),
+      btn('⇥',  () => document.execCommand('indent'),   null, 'Increase indent'),
+      btn('⇤',  () => document.execCommand('outdent'),  null, 'Decrease indent'),
+    ].forEach(b => tb.appendChild(b))
+    tb.appendChild(div())
+
+    // Page break + page size
+    const pbBtn = btn('⊟', () => this._insertPageBreak(), null, 'Page break (⌘↵)')
     tb.appendChild(pbBtn)
     tb.appendChild(div())
 
-    // Page size selector
-    const sel = document.createElement('select')
-    sel.id = 'pg-sel'; sel.className = 'editor-page-sel'; sel.title = 'Page size'
+    const pgSel = document.createElement('select')
+    pgSel.id = 'pg-sel'; pgSel.className = 'editor-page-sel'; pgSel.title = 'Page size'
     ;[['a4','A4'],['letter','Letter'],['custom','Custom']].forEach(([val,lbl]) => {
-      const opt = document.createElement('option'); opt.value = val; opt.textContent = lbl; sel.appendChild(opt)
+      const opt = document.createElement('option'); opt.value = val; opt.textContent = lbl; pgSel.appendChild(opt)
     })
-    this.getPageSize().then(pg => { sel.value = pg.preset || 'a4' })
-    sel.addEventListener('change', async () => {
+    this.getPageSize().then(pg => { pgSel.value = pg.preset || 'a4' })
+    pgSel.addEventListener('change', async () => {
       let saved
-      if (sel.value === 'custom') {
-        const w = parseInt(prompt('Page width (px):', '794') || '794')
-        const h = parseInt(prompt('Page height (px):', '1123') || '1123')
-        saved = { preset: 'custom', width: w, height: h, label: 'Custom' }
+      if (pgSel.value === 'custom') {
+        const w = parseInt(prompt('Width (px):', '794') || '794')
+        const h = parseInt(prompt('Height (px):', '1123') || '1123')
+        saved = { preset: 'custom', width: w, height: h }
       } else {
-        saved = { ...this.PAGE_SIZES[sel.value], preset: sel.value }
+        saved = { ...this.PAGE_SIZES[pgSel.value], preset: pgSel.value }
       }
       await api.store.set('page-size', saved)
       this._applyPageSize()
     })
-    tb.appendChild(sel)
-
-    this._content.addEventListener('keyup', () => this._updateToolbar())
-    this._content.addEventListener('mouseup', () => this._updateToolbar())
-
-    // Font size control
-    const fsSep = div(); tb.appendChild(fsSep)
-    const fsSel = document.createElement('select')
-    fsSel.className = 'editor-page-sel'
-    fsSel.title = 'Font size'
-    ;[12, 14, 16, 18, 20, 22, 24, 28, 32].forEach(sz => {
-      const opt = document.createElement('option')
-      opt.value = sz; opt.textContent = `${sz}pt`
-      fsSel.appendChild(opt)
-    })
-    fsSel.value = 18
-    api.store.get('editor-font-size').then(v => {
-      if (v) { fsSel.value = v; if (this._content) this._content.style.fontSize = v + 'px' }
-    }).catch(() => {})
-    fsSel.addEventListener('change', async () => {
-      const sz = fsSel.value
-      if (this._content) this._content.style.fontSize = sz + 'px'
-      await api.store.set('editor-font-size', sz)
-    })
-    tb.appendChild(fsSel)
+    tb.appendChild(pgSel)
   },
 
   _exec(cmd, arg) { document.execCommand(cmd, false, arg || null); this._content.focus() },
 
   _updateToolbar() {
-    document.querySelectorAll('.editor-tool[data-cmd]').forEach(btn => {
-      const cmd = btn.dataset.cmd, arg = btn.dataset.arg
-      let active = false
-      try {
-        if (cmd === 'formatBlock') active = document.queryCommandValue('formatBlock').toLowerCase() === arg
-        else active = document.queryCommandState(cmd)
-      } catch {}
-      btn.classList.toggle('active', active)
+    // Update style buttons
+    document.querySelectorAll('.editor-tool').forEach(btn => {
+      if (btn._activeCheck) {
+        try { btn.classList.toggle('active', btn._activeCheck()) } catch {}
+      }
     })
+    // Update paragraph style selector
+    const hSel = document.querySelector('.editor-page-sel[title="Paragraph style"]')
+    if (hSel) {
+      try {
+        const tag = document.queryCommandValue('formatBlock').toLowerCase()
+        if (['h1','h2','h3','blockquote'].includes(tag)) hSel.value = tag
+        else hSel.value = 'p'
+      } catch {}
+    }
   },
 
   _insertPageBreak() {
@@ -187,19 +206,54 @@ const Editor = {
   },
 
   _onKeydown(e) {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'b') { e.preventDefault(); this._exec('bold') }
-    if ((e.metaKey || e.ctrlKey) && e.key === 'i') { e.preventDefault(); this._exec('italic') }
-    if ((e.metaKey || e.ctrlKey) && e.key === 'u') { e.preventDefault(); this._exec('underline') }
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); this._insertPageBreak() }
+    const mod = e.metaKey || e.ctrlKey
+    if (mod && e.key === 'b') { e.preventDefault(); document.execCommand('bold') }
+    if (mod && e.key === 'i') { e.preventDefault(); document.execCommand('italic') }
+    if (mod && e.key === 'u') { e.preventDefault(); document.execCommand('underline') }
+    if (mod && e.shiftKey && e.key === 'L') { e.preventDefault(); document.execCommand('justifyLeft') }
+    if (mod && e.shiftKey && e.key === 'E') { e.preventDefault(); document.execCommand('justifyCenter') }
+    if (mod && e.shiftKey && e.key === 'R') { e.preventDefault(); document.execCommand('justifyRight') }
+    if (mod && e.shiftKey && e.key === 'J') { e.preventDefault(); document.execCommand('justifyFull') }
+    if (mod && e.key === 'Enter') { e.preventDefault(); this._insertPageBreak() }
+  },
+
+  async _applyPageSize() {
+    const pg = await this.getPageSize()
+    const wrap = document.getElementById('editor-page-wrap')
+    if (!wrap) return
+    const lineH = pg.height - this.MARGIN * 2
+    wrap.style.cssText = `
+      width: ${pg.width}px;
+      min-height: ${pg.height}px;
+      background: #1c1c18;
+      border: 1px solid var(--b1);
+      border-radius: 2px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+      padding: ${this.MARGIN}px;
+      position: relative;
+      background-image: repeating-linear-gradient(to bottom, transparent, transparent ${lineH - 1}px, rgba(255,255,255,0.07) ${lineH - 1}px, rgba(255,255,255,0.07) ${lineH}px);
+      background-size: 100% ${lineH}px;
+      background-position: 0 ${this.MARGIN}px;
+    `
+    if (this._content) this._content.style.minHeight = lineH + 'px'
+    this._updatePageCount(pg)
+  },
+
+  _updatePageCount(pg) {
+    if (!this._content) return
+    const lineH = pg.height - this.MARGIN * 2
+    const pages = Math.max(1, Math.ceil(this._content.scrollHeight / lineH))
+    const el = document.getElementById('page-count')
+    if (el) el.textContent = `Page ${pages}`
   },
 
   _updateCounts() {
-    const text = this._content.innerText || ''
+    const text = this._content?.innerText || ''
     const words = text.trim() ? text.trim().split(/\s+/).length : 0
     const wc = document.getElementById('word-count')
     const cc = document.getElementById('char-count')
     if (wc) wc.textContent = `${words} words`
-    if (cc) cc.textContent = `${text.length} characters`
+    if (cc) cc.textContent = `${text.length} chars`
   },
 
   async loadDoc(path) {
@@ -212,20 +266,27 @@ const Editor = {
     this._updateToolbar()
     this._applyPageSize()
     // Restore font size
-    api.store.get('editor-font-size').then(v => {
-      if (v && this._content) this._content.style.fontSize = v + 'px'
-    }).catch(() => {})
-    // Auto-focus and place cursor at end
-    setTimeout(() => {
+    try {
+      const v = await api.store.get('editor-font-size')
+      if (v && this._content) {
+        this._content.style.fontSize = v + 'pt'
+        const sel = document.querySelector('.editor-page-sel[title="Font size"]')
+        if (sel) sel.value = v
+      }
+    } catch {}
+    // Focus at end
+    requestAnimationFrame(() => {
       if (!this._content) return
       this._content.focus()
-      const range = document.createRange()
-      const sel = window.getSelection()
-      range.selectNodeContents(this._content)
-      range.collapse(false)
-      sel.removeAllRanges()
-      sel.addRange(range)
-    }, 50)
+      try {
+        const range = document.createRange()
+        range.selectNodeContents(this._content)
+        range.collapse(false)
+        const sel = window.getSelection()
+        sel.removeAllRanges()
+        sel.addRange(range)
+      } catch {}
+    })
   },
 
   async _save() {

@@ -338,3 +338,8 @@ input[type=range].editor-font-size::-webkit-slider-thumb { -webkit-appearance: n
   cursor: pointer;
 }
 .splash-settings-back:hover { border-color: var(--b2); color: var(--tx2); }
+
+/* Editor toolbar refinements */
+.editor-toolbar { flex-wrap: wrap; gap: 1px; }
+.editor-tool svg { display: block; }
+.editor-tool { min-width: 28px; }

@@ -18,8 +18,8 @@
   <script src="js/settings.js"></script>
   <script src="js/app.js"></script>
   <script>
-    // Wait for store to async-verify project folders before rendering
-    Store.load().then(() => App.init())
+    // Store is already loaded sync. Now verify project exists async, then render.
+    Store.verifyProject().then(() => App.init())
   </script>
 </body>
 </html>

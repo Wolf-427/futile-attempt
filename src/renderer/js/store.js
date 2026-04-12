@@ -33,7 +33,8 @@ const Store = {
 
   get project() { return this._data.projects.find(p => p.id === this._data.activeId) || null },
 
-  async load() {
+  // Sync load from localStorage first — always works
+  loadSync() {
     try {
       const saved = localStorage.getItem('scriptum-store')
       if (saved) {
@@ -41,23 +42,30 @@ const Store = {
         if (d.projects) this._data.projects = d.projects
         if (d.sidebar !== undefined) this._data.sidebar = d.sidebar
         if (d.boardFile) this._data.boardFile = d.boardFile
-
-        // Only restore activeId if the project folder still exists
-        if (d.activeId && d.projects) {
-          const p = d.projects.find(x => x.id === d.activeId)
-          if (p) {
-            const exists = await api.fs.exists(`${p.dir}/scriptum.json`)
-            if (exists) {
-              this._data.activeId = d.activeId
-              if (d.docPath) {
-                const docExists = await api.fs.exists(d.docPath)
-                if (docExists) this._data.docPath = d.docPath
-              }
-            }
-          }
-        }
+        if (d.docPath) this._data.docPath = d.docPath
+        // Restore activeId immediately — verify existence async separately
+        if (d.activeId) this._data.activeId = d.activeId
       }
-    } catch(e) { console.error('Store load error:', e) }
+    } catch(e) { console.error('Store loadSync error:', e) }
+  },
+
+  // Then async-verify the project folder still exists
+  async verifyProject() {
+    const id = this._data.activeId
+    if (!id) return
+    const p = this._data.projects.find(x => x.id === id)
+    if (!p) { this._data.activeId = null; return }
+    try {
+      const exists = await api.fs.exists(`${p.dir}/scriptum.json`)
+      if (!exists) {
+        this._data.activeId = null
+        this._data.docPath = null
+        this.save()
+      } else if (this._data.docPath) {
+        const docExists = await api.fs.exists(this._data.docPath)
+        if (!docExists) { this._data.docPath = null; this.save() }
+      }
+    } catch { this._data.activeId = null; this._data.docPath = null; this.save() }
   },
 
   save() {
@@ -69,6 +77,9 @@ const Store = {
         sidebar:   this._data.sidebar,
         boardFile: this._data.boardFile,
       }))
-    } catch {}
+    } catch(e) { console.error('Store save error:', e) }
   }
 }
+
+// Load sync immediately so data is available before App.init()
+Store.loadSync()
