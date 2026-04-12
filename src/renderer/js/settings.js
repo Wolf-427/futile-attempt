@@ -40,7 +40,8 @@ const Settings = {
 
   _bind() {
     document.getElementById('save-token')?.addEventListener('click', async () => {
-      const t = document.getElementById('token-input')?.value?.trim(); if (!t) return
+      const t = document.getElementById('token-input')?.value?.trim()
+      if (!t) return
       await api.store.set('gh-token', t)
       document.getElementById('token-area').innerHTML = `<div class="settings-row"><span style="color:var(--ok);font-size:13px">✓ Token saved</span><button class="btn-sm danger" id="clear-token" style="margin-left:10px">Remove</button></div>`
       document.getElementById('clear-token').addEventListener('click', async () => { await api.store.del('gh-token'); location.reload() })
@@ -50,15 +51,23 @@ const Settings = {
     document.getElementById('check-update').addEventListener('click', async () => {
       const token = await api.store.get('gh-token')
       if (!token) { this._msg('Save a GitHub token first', 'err'); return }
-      this._msg('Checking…', ''); document.getElementById('update-card').innerHTML = ''
+      this._msg('Checking…', '')
+      document.getElementById('update-card').innerHTML = ''
       const result = await api.updater.check(token, 'Wolf-427', 'futile-attempt')
       if (result.error) { this._msg('Error: ' + result.error, 'err'); return }
       if (!result.hasUpdate) { this._msg('✓ Already up to date', 'ok'); return }
       this._msg('', '')
+
+      // Format the commit date nicely
+      const dateStr = result.commitDate
+        ? new Date(result.commitDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+        : ''
+
       document.getElementById('update-card').innerHTML = `
         <div class="update-card">
           <div class="update-title">Update available</div>
-          <div class="update-meta">v${this._currentVersion} → v${result.newVersion || result.latestSha.slice(0,7)}</div>
+          <div class="update-meta">Installed: v${this._currentVersion} → Latest: v${result.newVersion}</div>
+          ${dateStr ? `<div class="update-date">${dateStr}</div>` : ''}
           ${result.message ? `<div class="update-msg">${result.message}</div>` : ''}
           <button class="btn-sm primary" id="apply-btn" style="margin-top:12px">Download and apply</button>
         </div>
@@ -67,8 +76,13 @@ const Settings = {
         document.getElementById('apply-btn').disabled = true
         this._msg('Applying update…', '')
         const r = await api.updater.apply(token, 'Wolf-427', 'futile-attempt', result.latestSha)
-        if (r.ok) { this._msg(`✓ Updated ${r.filesUpdated} files. Restarting…`, 'ok'); setTimeout(() => api.updater.restart(), 1500) }
-        else { this._msg('✗ ' + r.error, 'err'); document.getElementById('apply-btn').disabled = false }
+        if (r.ok) {
+          this._msg(`✓ Updated ${r.filesUpdated} files. Restarting…`, 'ok')
+          setTimeout(() => api.updater.restart(), 1500)
+        } else {
+          this._msg('✗ ' + r.error, 'err')
+          document.getElementById('apply-btn').disabled = false
+        }
       })
     })
   },
