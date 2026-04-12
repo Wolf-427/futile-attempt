@@ -348,33 +348,61 @@ const App = {
     let addingDoc = false
     addDocBtn.onclick = () => {
       if (addingDoc) return; addingDoc = true
-      const inp = document.createElement('input'); inp.className = 'sidebar-new-input'; inp.placeholder = 'Name…'
-      docsSection.insertBefore(inp, docTree); inp.focus()
+
+      // Show name input
+      const inp = document.createElement('input')
+      inp.className = 'sidebar-new-input'; inp.placeholder = 'Name…'
+      docsSection.insertBefore(inp, docTree)
+      inp.focus()
+
+      const cancel = () => { inp.remove(); addingDoc = false }
+
       const finish = async () => {
         const name = inp.value.trim()
-        if (!name) { inp.remove(); addingDoc = false; return }
-        // Show template picker
-        inp.remove(); addingDoc = false
+        if (!name) { cancel(); return }
+
+        // Remove input first — but don't set addingDoc = false yet
+        inp.remove()
+
+        // Show template picker inline
         const picker = document.createElement('div')
         picker.className = 'template-picker'
-        picker.innerHTML = `<div class="template-label">Template</div>`
+        const lbl = document.createElement('div'); lbl.className = 'template-label'; lbl.textContent = 'Choose template'
+        picker.appendChild(lbl)
+
+        const createDoc = async (tmpl) => {
+          picker.remove(); addingDoc = false
+          const p = `${project.dir}/documents/${name}.md`
+          const body = (tmpl?.content || '# {name}\n\n').replace(/\{name\}/g, name)
+          await api.fs.write(p, body)
+          Store._data.docPath = p; Store.save(); Store.set('view', 'editor')
+        }
+
         Object.entries(Project.templates).forEach(([key, tmpl]) => {
-          const b = document.createElement('button')
-          b.className = 'template-btn'; b.textContent = tmpl.label
-          b.onclick = async () => {
-            picker.remove()
-            const p = `${project.dir}/documents/${name}.md`
-            const body = tmpl.content.replace(/\{name\}/g, name)
-            await api.fs.write(p, body)
-            Store._data.docPath = p; Store.save(); Store.set('view', 'editor')
-          }
+          const b = document.createElement('button'); b.className = 'template-btn'; b.textContent = tmpl.label
+          b.onclick = () => createDoc(tmpl)
           picker.appendChild(b)
         })
+
+        // Also allow pressing Escape to cancel picker
+        picker.addEventListener('keydown', e => { if (e.key === 'Escape') { picker.remove(); addingDoc = false } })
+
         docsSection.insertBefore(picker, docTree)
-        setTimeout(() => { if (picker.parentNode) picker.remove() }, 8000)
+        // Auto-dismiss after 10s
+        setTimeout(() => { if (picker.parentNode) { picker.remove(); addingDoc = false } }, 10000)
       }
-      inp.addEventListener('keydown', e => { if (e.key==='Enter') finish(); if (e.key==='Escape') { inp.remove(); addingDoc=false } })
-      inp.addEventListener('blur', () => { if (addingDoc) { inp.remove(); addingDoc=false } })
+
+      inp.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); finish() }
+        if (e.key === 'Escape') cancel()
+      })
+      // Only cancel on blur if picker isn't showing yet
+      inp.addEventListener('blur', () => {
+        setTimeout(() => {
+          // If input is still in DOM somehow, or addingDoc still true and no picker exists
+          if (addingDoc && !docsSection.querySelector('.template-picker')) cancel()
+        }, 150)
+      })
     }
     docsHdr.appendChild(docsLbl); docsHdr.appendChild(addDocBtn); docsSection.appendChild(docsHdr)
     const docTree = document.createElement('div'); docsSection.appendChild(docTree)
