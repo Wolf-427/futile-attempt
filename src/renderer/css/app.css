@@ -488,3 +488,11 @@ input[type=range].editor-font-size::-webkit-slider-thumb { -webkit-appearance: n
   background: rgba(201,169,110,0.1) !important;
   box-shadow: 0 0 0 2px rgba(201,169,110,0.25), inset 0 0 20px rgba(201,169,110,0.05) !important;
 }
+
+/* Selected group highlight */
+.pin-selected[style*="border-radius: 14px"],
+.canvas-group.pin-selected {
+  border-color: rgba(201,169,110,0.95) !important;
+  background: rgba(201,169,110,0.1) !important;
+  box-shadow: 0 0 0 2px rgba(201,169,110,0.4) !important;
+}

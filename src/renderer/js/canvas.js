@@ -377,7 +377,19 @@ const Canvas = {
 
   // ── Selection ─────────────────────────────────────────────────────────────
 
-  _selectNode(id)   { this._selected.add(id);    document.getElementById(`pin-${id}`)?.classList.add('pin-selected') },
+  _selectNode(id) {
+    this._selected.add(id)
+    const el = document.getElementById(`pin-${id}`)
+    if (el) el.classList.add('pin-selected')
+    // If selecting a group, highlight all its members too
+    const node = this._board?.nodes?.find(n => n.id === id)
+    if (node?.type === 'group') {
+      for (const mid of (node.members || [])) {
+        this._selected.add(mid)
+        document.getElementById(`pin-${mid}`)?.classList.add('pin-selected')
+      }
+    }
+  },
   _deselectNode(id) { this._selected.delete(id); document.getElementById(`pin-${id}`)?.classList.remove('pin-selected') },
   _clearSelection() { [...this._selected].forEach(id=>this._deselectNode(id)); this._selected.clear() },
 
@@ -466,11 +478,29 @@ const Canvas = {
     const ids = [...this._selected]
     if (ids.length < 2) { this._showHint('Shift+click or drag-select 2+ pins first, then group.', 3000); return }
 
+    const selectedNodes = ids.map(id => this._board.nodes.find(n => n.id === id)).filter(Boolean)
+    const selectedGroups = selectedNodes.filter(n => n.type === 'group')
+    const selectedPins   = selectedNodes.filter(n => n.type !== 'group')
+
+    // If exactly one group is selected alongside other pins → add pins to that group
+    if (selectedGroups.length === 1 && selectedPins.length >= 1) {
+      const group = selectedGroups[0]
+      for (const pin of selectedPins) {
+        if (!group.members.includes(pin.id)) group.members.push(pin.id)
+      }
+      this._recomputeGroup(group)
+      this._clearSelection()
+      this._snapshot(); this._persist()
+      this._showHint(`Added ${selectedPins.length} pin${selectedPins.length>1?'s':''} to "${group.name}"`, 2000)
+      return
+    }
+
+    // Otherwise create a new group from selected pins
+    const members = selectedPins
+    if (members.length < 2) { this._showHint('Select at least 2 pins to group.', 3000); return }
+
     const name = await this._prompt('Group name:', 'Group')
     if (!name) return
-
-    const members = ids.map(id => this._board.nodes.find(n => n.id === id)).filter(n => n && n.type !== 'group')
-    if (members.length < 2) { this._showHint('Select at least 2 non-group pins.', 3000); return }
 
     const PAD = 32
     const minX = Math.min(...members.map(n => n.x)) - PAD
@@ -488,20 +518,25 @@ const Canvas = {
       height:  maxY - minY,
       members: members.map(n => n.id),
     }
-
-    // unshift = insert at index 0 = renders BEHIND all other pins
     this._board.nodes.unshift(group)
     this._clearSelection()
-    this._snapshot()
-    this._persist()
-    this._renderAll()
+    this._snapshot(); this._persist(); this._renderAll()
   },
 
   // ── Context menus ─────────────────────────────────────────────────────────
 
   _showCanvasMenu(cx, cy) {
     const items = []
-    if (this._selected.size >= 2) { items.push({label:`⊡  Group ${this._selected.size} pins`, kbd:'⌘G', action:()=>this._groupSelected()}); items.push('---') }
+    if (this._selected.size >= 2) {
+      const selNodes = [...this._selected].map(id => this._board.nodes.find(n => n.id === id)).filter(Boolean)
+      const hasGroup = selNodes.some(n => n.type === 'group')
+      const pinCount = selNodes.filter(n => n.type !== 'group').length
+      const label = hasGroup && selNodes.filter(n=>n.type==='group').length===1
+        ? `⊡  Add ${pinCount} pin${pinCount!==1?'s':''} to group`
+        : `⊡  Group ${this._selected.size} pins`
+      items.push({label, kbd:'⌘G', action:()=>this._groupSelected()})
+      items.push('---')
+    }
     items.push(
       {label:'Add yellow note',  action:()=>this._addNoteAt(cx,cy,'yellow')},
       {label:'Add blue note',    action:()=>this._addNoteAt(cx,cy,'blue')},
@@ -517,7 +552,16 @@ const Canvas = {
 
   _showNodeMenu(cx, cy, node) {
     const items = []
-    if (this._selected.size >= 2) { items.push({label:`⊡  Group ${this._selected.size} pins`, kbd:'⌘G', action:()=>this._groupSelected()}); items.push('---') }
+    if (this._selected.size >= 2) {
+      const selNodes = [...this._selected].map(id => this._board.nodes.find(n => n.id === id)).filter(Boolean)
+      const hasGroup = selNodes.some(n => n.type === 'group')
+      const pinCount = selNodes.filter(n => n.type !== 'group').length
+      const label = hasGroup && selNodes.filter(n=>n.type==='group').length===1
+        ? `⊡  Add ${pinCount} pin${pinCount!==1?'s':''} to group`
+        : `⊡  Group ${this._selected.size} pins`
+      items.push({label, kbd:'⌘G', action:()=>this._groupSelected()})
+      items.push('---')
+    }
     if (node.type==='note') {
       items.push({label:'Duplicate', kbd:'⌘D', action:()=>this._duplicateNode(node)}); items.push('---')
       ;['yellow','blue','green','purple'].filter(c=>c!==node.color).forEach(c=>items.push({label:`Change to ${c}`,action:()=>{node.color=c;this._renderNode(node);this._snapshot();this._persist()}}))
