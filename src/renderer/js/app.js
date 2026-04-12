@@ -2,8 +2,7 @@ const App = {
   _project: null,
 
   async init() {
-    // Only re-render when navigation-relevant keys change
-    Store.sub(['activeId', 'view', 'sidebar', 'boardFile', 'boardStack'], (data, key) => {
+    Store.sub(['activeId', 'view', 'sidebar', 'boardFile', 'boardStack'], () => {
       this.render()
     })
     this.render()
@@ -17,98 +16,135 @@ const App = {
     this.renderWorkspace(root, this._project)
   },
 
+  // ── Welcome / Splash ────────────────────────────────────────────────────────
+
   renderWelcome(root) {
-    root.innerHTML = `
-      <div class="welcome">
-        <div class="welcome-drag"></div>
-        <div class="welcome-center">
-          <div class="welcome-title">Scriptum</div>
-          <p class="welcome-sub">A place for writing that thinks</p>
-          <div id="welcome-main"></div>
-          <div id="welcome-err" class="welcome-err"></div>
-          <div id="welcome-recent"></div>
-        </div>
-      </div>
-    `
-    this.renderWelcomeMain()
-    this.renderRecent()
-  },
-
-  renderWelcomeMain(creating = false) {
-    const el = document.getElementById('welcome-main')
-    if (!creating) {
-      el.innerHTML = `<div class="welcome-actions"><button class="btn btn-primary" id="btn-new">New project</button><button class="btn" id="btn-open">Open project</button></div>`
-      document.getElementById('btn-new').onclick = () => this.renderWelcomeMain(true)
-      document.getElementById('btn-open').onclick = () => this.openProject()
-    } else {
-      el.innerHTML = `
-        <div class="welcome-form">
-          <input class="welcome-input" id="project-name" placeholder="Project name…"/>
-          <div class="welcome-form-row">
-            <button class="btn" id="btn-cancel">Cancel</button>
-            <button class="btn btn-primary" id="btn-create">Choose folder →</button>
-          </div>
-        </div>
-      `
-      document.getElementById('project-name').focus()
-      document.getElementById('project-name').addEventListener('keydown', e => {
-        if (e.key === 'Enter') this.createProject()
-        if (e.key === 'Escape') this.renderWelcomeMain()
-      })
-      document.getElementById('btn-cancel').onclick = () => this.renderWelcomeMain()
-      document.getElementById('btn-create').onclick = () => this.createProject()
-    }
-  },
-
-  renderRecent() {
-    const el = document.getElementById('welcome-recent')
     const projects = Store.get('projects')
-    if (!projects.length) return
-    el.innerHTML = `
-      <div class="welcome-recent">
-        <div class="welcome-recent-label">Recent</div>
-        ${[...projects].reverse().slice(0, 5).map(p => `
-          <button class="welcome-recent-item" data-id="${p.id}">
-            <span class="welcome-recent-name">${p.name}</span>
-            <span class="welcome-recent-path">${p.dir}</span>
-          </button>
-        `).join('')}
+    root.innerHTML = `
+      <div class="splash">
+        <div class="splash-drag"></div>
+        <div class="splash-body">
+
+          <div class="splash-left">
+            <div class="splash-logo">
+              <div class="splash-logo-mark">S</div>
+              <div class="splash-logo-text">Scriptum</div>
+            </div>
+            <p class="splash-version">Version ${window._appVersion || '0.2.0'}</p>
+            <div class="splash-actions">
+              <button class="splash-action-btn" id="btn-new">
+                <span class="splash-action-icon">✦</span>
+                <span class="splash-action-label">New project</span>
+                <span class="splash-action-hint">Start from scratch</span>
+              </button>
+              <button class="splash-action-btn" id="btn-open">
+                <span class="splash-action-icon">⌂</span>
+                <span class="splash-action-label">Open project</span>
+                <span class="splash-action-hint">Browse for a folder</span>
+              </button>
+            </div>
+            <div id="splash-err" class="splash-err"></div>
+            <div id="splash-form" class="splash-form hidden">
+              <input class="splash-input" id="project-name" placeholder="Project name…" autocomplete="off"/>
+              <div class="splash-form-row">
+                <button class="splash-cancel" id="btn-cancel">Cancel</button>
+                <button class="splash-confirm" id="btn-create">Choose location →</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="splash-right">
+            <div class="splash-recent-header">Recent projects</div>
+            ${projects.length === 0
+              ? `<div class="splash-no-recent">No recent projects yet</div>`
+              : [...projects].reverse().map(p => `
+                  <button class="splash-recent-item" data-id="${p.id}" data-dir="${p.dir}">
+                    <div class="splash-recent-icon">📁</div>
+                    <div class="splash-recent-info">
+                      <div class="splash-recent-name">${p.name}</div>
+                      <div class="splash-recent-path">${p.dir}</div>
+                    </div>
+                    <div class="splash-recent-arrow">›</div>
+                  </button>
+                `).join('')
+            }
+          </div>
+
+        </div>
       </div>
     `
-    el.querySelectorAll('.welcome-recent-item').forEach(btn => {
+
+    // Bind
+    document.getElementById('btn-new').onclick = () => this._showNewForm()
+    document.getElementById('btn-open').onclick = () => this.openProject()
+    document.querySelectorAll('.splash-recent-item').forEach(btn => {
       btn.onclick = () => Store.set('activeId', btn.dataset.id)
+    })
+
+    // Load version
+    api.app.version().then(v => {
+      window._appVersion = v
+      const el = document.querySelector('.splash-version')
+      if (el) el.textContent = `Version ${v}`
+    }).catch(() => {})
+  },
+
+  _showNewForm() {
+    document.getElementById('splash-form').classList.remove('hidden')
+    document.getElementById('project-name').focus()
+    document.getElementById('btn-new').style.opacity = '0.4'
+    document.getElementById('btn-open').style.opacity = '0.4'
+    document.getElementById('btn-cancel').onclick = () => {
+      document.getElementById('splash-form').classList.add('hidden')
+      document.getElementById('project-name').value = ''
+      document.getElementById('btn-new').style.opacity = ''
+      document.getElementById('btn-open').style.opacity = ''
+    }
+    document.getElementById('btn-create').onclick = () => this.createProject()
+    document.getElementById('project-name').addEventListener('keydown', e => {
+      if (e.key === 'Enter') this.createProject()
+      if (e.key === 'Escape') document.getElementById('btn-cancel').click()
     })
   },
 
   async createProject() {
     const name = document.getElementById('project-name')?.value?.trim()
     if (!name) return
+    const btn = document.getElementById('btn-create')
+    btn.textContent = 'Creating…'; btn.disabled = true
     try {
-      const folder = await api.dialog.folder(); if (!folder) return
+      const folder = await api.dialog.folder()
+      if (!folder) { btn.textContent = 'Choose location →'; btn.disabled = false; return }
       const p = await Project.create(name, folder)
-      const projects = [...Store.get('projects'), { id: p.id, name: p.name, dir: p.dir }]
-      // Set without triggering listener yet
-      Store._data.projects = projects
+      Store._data.projects = [...Store.get('projects'), { id: p.id, name: p.name, dir: p.dir }]
       Store.save()
       Store.set('activeId', p.id)
     } catch (e) {
-      const err = document.getElementById('welcome-err')
+      const err = document.getElementById('splash-err')
       if (err) err.textContent = e.message
+      btn.textContent = 'Choose location →'; btn.disabled = false
     }
   },
 
   async openProject() {
+    const btn = document.getElementById('btn-open')
+    btn.style.opacity = '0.4'
     try {
-      const folder = await api.dialog.folder(); if (!folder) return
+      const folder = await api.dialog.folder()
+      if (!folder) { btn.style.opacity = ''; return }
       const p = await Project.open(folder)
       const existing = Store.get('projects').find(x => x.dir === folder)
       if (existing) { Store.set('activeId', existing.id); return }
-      const projects = [...Store.get('projects'), { id: p.id, name: p.name, dir: p.dir }]
-      Store._data.projects = projects
+      Store._data.projects = [...Store.get('projects'), { id: p.id, name: p.name, dir: p.dir }]
       Store.save()
       Store.set('activeId', p.id)
-    } catch (e) { alert(e.message) }
+    } catch (e) {
+      alert(e.message)
+      btn.style.opacity = ''
+    }
   },
+
+  // ── Workspace ────────────────────────────────────────────────────────────────
 
   renderWorkspace(root, project) {
     const s = Store.get()
@@ -130,8 +166,8 @@ const App = {
           </div>
           <div class="spacer"></div>
           <div class="git-area">
-            <span class="git-branch" id="git-branch">⎇ ${s.git.branch}</span>
-            <span class="git-dot ${s.git.dirty ? 'dirty' : 'clean'}" id="git-dot" title="${s.git.dirty ? 'Unsaved changes' : 'All saved'}"></span>
+            <span class="git-branch">⎇ ${s.git.branch}</span>
+            <span class="git-dot ${s.git.dirty ? 'dirty' : 'clean'}" title="${s.git.dirty ? 'Unsaved changes' : 'All saved'}"></span>
           </div>
         </div>
         <div class="body">
@@ -143,11 +179,9 @@ const App = {
 
     root.querySelectorAll('.nav-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        // Don't re-render if already on this view
         if (Store.get('view') !== btn.dataset.view) Store.set('view', btn.dataset.view)
       })
     })
-
     document.getElementById('toggle-sidebar').addEventListener('click', () => {
       Store.set('sidebar', !Store.get('sidebar'))
     })
@@ -179,10 +213,7 @@ const App = {
         if (!name) return
         const p = `${project.dir}/documents/${name}.md`
         await api.fs.write(p, `# ${name}\n\n`)
-        // Update docPath without full re-render — just switch view
-        Store._data.docPath = p
-        Store.save()
-        Store.set('view', 'editor')
+        Store._data.docPath = p; Store.save(); Store.set('view', 'editor')
       }
       inp.addEventListener('keydown', e => { if (e.key === 'Enter') finish(); if (e.key === 'Escape') { inp.remove(); addingDoc = false } })
       inp.addEventListener('blur', () => { if (addingDoc) { inp.remove(); addingDoc = false } })
@@ -201,11 +232,10 @@ const App = {
       this.openBoard(b.file)
     }
     boardsHdr.appendChild(boardsLbl); boardsHdr.appendChild(addBoardBtn); boardsSection.appendChild(boardsHdr)
-
     const masterBtn = document.createElement('button')
     masterBtn.className = 'sidebar-row' + (s.view === 'board' && s.boardFile === 'master.json' ? ' board-active' : '')
     masterBtn.textContent = '◎ Master board'
-    masterBtn.onclick = () => { this.openBoard('master.json', false) }
+    masterBtn.onclick = () => this.openBoard('master.json', false)
     boardsSection.appendChild(masterBtn); container.appendChild(boardsSection)
 
     const footer = document.createElement('div'); footer.className = 'sidebar-footer'
@@ -215,18 +245,14 @@ const App = {
     footer.appendChild(pathBtn); container.appendChild(footer)
 
     Project.readDocs(project.dir).then(docs => {
-      if (!docs.length) {
-        const e = document.createElement('span'); e.className = 'sidebar-empty'; e.textContent = 'No documents yet'
-        docTree.appendChild(e); return
-      }
+      if (!docs.length) { const e = document.createElement('span'); e.className = 'sidebar-empty'; e.textContent = 'No documents yet'; docTree.appendChild(e); return }
       docs.forEach(n => this._docNode(n, docTree, s.docPath))
     })
-
     Project.readBoards(project.dir).then(boards => {
       boards.filter(b => !b.isMaster).forEach(b => {
         const btn = document.createElement('button')
         btn.className = 'sidebar-row' + (s.view === 'board' && s.boardFile === b.file ? ' board-active' : '')
-        btn.innerHTML = `⊞ <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${b.name}</span><span class="board-count">${(b.nodes || []).length}</span>`
+        btn.innerHTML = `⊞ <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${b.name}</span><span class="board-count">${(b.nodes||[]).length}</span>`
         btn.onclick = () => this.openBoard(b.file, false)
         boardsSection.appendChild(btn)
       })
@@ -239,12 +265,9 @@ const App = {
       btn.className = 'sidebar-row' + (activePath === node.path ? ' active' : '')
       btn.textContent = `📄 ${node.name}`
       btn.onclick = () => {
-        // Load doc without full re-render if already in editor view
-        Store._data.docPath = node.path
-        Store.save()
+        Store._data.docPath = node.path; Store.save()
         if (Store.get('view') === 'editor') {
           Editor.loadDoc(node.path)
-          // Update active state in sidebar
           document.querySelectorAll('.sidebar-row.active').forEach(el => el.classList.remove('active'))
           btn.classList.add('active')
         } else {
@@ -264,12 +287,8 @@ const App = {
 
   renderEditor(container, project) {
     const docPath = Store.get('docPath')
-    if (!docPath) {
-      container.innerHTML = '<div class="editor-empty">Select a document from the sidebar</div>'
-      return
-    }
-    Editor.mount(container)
-    Editor.loadDoc(docPath)
+    if (!docPath) { container.innerHTML = '<div class="editor-empty">Select a document from the sidebar</div>'; return }
+    Editor.mount(container); Editor.loadDoc(docPath)
   },
 
   renderBoard(container, project) {
@@ -278,13 +297,8 @@ const App = {
   },
 
   openBoard(file, push = true) {
-    if (push) {
-      const stack = Store.get('boardStack')
-      Store._data.boardStack = [...stack, Store.get('boardFile')]
-    }
-    Store._data.boardFile = file
-    Store.save()
-    Store.set('view', 'board')
+    if (push) { Store._data.boardStack = [...Store.get('boardStack'), Store.get('boardFile')] }
+    Store._data.boardFile = file; Store.save(); Store.set('view', 'board')
   }
 }
 
