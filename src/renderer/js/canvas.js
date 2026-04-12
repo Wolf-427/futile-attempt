@@ -231,7 +231,43 @@ const Canvas = {
     window.addEventListener('mouseup', () => {
       this._area.style.cursor='default'
       if (this._panning){this._panning=false;return}
-      if (this._drag||this._resize){this._snapshot();this._persist();this._renderArrows()}
+      if (this._drag) {
+        // Only check group membership for regular nodes (not group boxes themselves)
+        if (this._drag.type === 'node') {
+          const node = this._board.nodes.find(n => n.id === this._drag.id)
+          if (node && node.type !== 'group') {
+            const targetGroup = this._groupAt(node)
+
+            // Remove from any group it was previously in
+            for (const g of this._board.nodes.filter(n => n.type === 'group')) {
+              const wasMember = g.members?.includes(node.id)
+              if (wasMember) {
+                if (targetGroup && targetGroup.id === g.id) {
+                  // Still in same group — just recompute bounds
+                  this._recomputeGroup(g)
+                } else {
+                  // Removed from this group
+                  g.members = g.members.filter(id => id !== node.id)
+                  if (g.members.length >= 1) this._recomputeGroup(g)
+                  // If group is now empty, remove it
+                  if (g.members.length === 0) {
+                    this._removeNode(g.id)
+                  }
+                }
+              }
+            }
+
+            // Add to new group if dropped onto one and not already a member
+            if (targetGroup && !targetGroup.members?.includes(node.id)) {
+              if (!targetGroup.members) targetGroup.members = []
+              targetGroup.members.push(node.id)
+              this._recomputeGroup(targetGroup)
+            }
+          }
+        }
+        this._snapshot(); this._persist(); this._renderArrows()
+      }
+      if (this._resize){this._snapshot();this._persist()}
       this._drag=null; this._resize=null
       if (this._marquee){this._marquee=null;document.getElementById('cv-marquee')?.classList.add('hidden')}
     })
