@@ -158,7 +158,12 @@ const Canvas = {
   _canvasCtxMenu(cx, cy) {
     const r=this._area.getBoundingClientRect()
     const wx=(cx-r.left-this._pan.x)/this._zoom, wy=(cy-r.top-this._pan.y)/this._zoom
-    this._showCtxMenu(cx, cy, [
+    const items=[]
+    if(this._selected.size>=2) {
+      items.push({label:`⊡ Group ${this._selected.size} pins`,kbd:'⌘G',action:()=>this._groupSelected()})
+      items.push('---')
+    }
+    items.push(...[
       {label:'Yellow note', action:()=>this._addNoteAt('yellow',wx,wy)},
       {label:'Blue note',   action:()=>this._addNoteAt('blue',wx,wy)},
       {label:'Green note',  action:()=>this._addNoteAt('green',wx,wy)},
@@ -168,12 +173,15 @@ const Canvas = {
       '---',
       {label:'Reset zoom', action:()=>{this._zoom=1;this._pan={x:80,y:80};this._updateTransform()}},
     ])
+    this._showCtxMenu(cx, cy, items)
   },
 
   _nodeCtxMenu(cx, cy, node) {
     const items=[]
-    if(this._selected.size>=2) {
-      items.push({label:`Group ${this._selected.size} selected`,kbd:'⌘G',action:()=>this._groupSelected()})
+    // Always show group option when multiple pins selected
+    const selCount=this._selected.size
+    if(selCount>=2) {
+      items.push({label:`⊡ Group ${selCount} pins`,kbd:'⌘G',action:()=>this._groupSelected()})
       items.push('---')
     }
     if(node.type==='note'){
@@ -274,7 +282,7 @@ const Canvas = {
     })
 
     window.addEventListener('keydown',e=>{
-      if(!this._world) return
+      if(!this._dir) return  // canvas is active if _dir is set
       const active=document.activeElement
       if(active&&(active.tagName==='TEXTAREA'||active.tagName==='INPUT'||active.contentEditable==='true')) return
       const mod=e.metaKey||e.ctrlKey
@@ -290,7 +298,16 @@ const Canvas = {
     })
   },
 
-  _startDrag(e,node){if(e.button!==0)return;e.stopPropagation();if(this._mode==='connect')return;if(this._locked.has(node.id))return;const r=this._area.getBoundingClientRect();this._drag={id:node.id,offX:(e.clientX-r.left-this._pan.x)/this._zoom-node.x,offY:(e.clientY-r.top-this._pan.y)/this._zoom-node.y};if(!e.shiftKey)this._clearSelection();this._selectNode(node.id)},
+  _startDrag(e,node){
+    if(e.button!==0)return; e.stopPropagation()
+    if(this._mode==='connect')return
+    if(this._locked.has(node.id))return
+    const r=this._area.getBoundingClientRect()
+    this._drag={id:node.id,offX:(e.clientX-r.left-this._pan.x)/this._zoom-node.x,offY:(e.clientY-r.top-this._pan.y)/this._zoom-node.y}
+    // Only clear selection if not shift-clicking AND this node isn't already selected
+    if(!e.shiftKey && !this._selected.has(node.id)) this._clearSelection()
+    this._selectNode(node.id)
+  },
   _startResize(e,node){e.stopPropagation();e.preventDefault();this._resize={id:node.id,startX:e.clientX,startY:e.clientY,startW:node.width||220,startH:node.height||160}},
   _selectNode(id){this._selected.add(id);document.getElementById(`pin-${id}`)?.classList.add('pin-selected')},
   _clearSelection(){this._selected.forEach(id=>document.getElementById(`pin-${id}`)?.classList.remove('pin-selected'));this._selected.clear()},
@@ -477,7 +494,8 @@ const Canvas = {
     el.appendChild(ta);el.appendChild(this._resizeHandle(n));this._addAnchors(el,n)
     el.addEventListener('mousedown',e=>this._startDrag(e,n))
     el.addEventListener('contextmenu',e=>{e.preventDefault();e.stopPropagation();if(!this._selected.has(n.id)){this._clearSelection();this._selectNode(n.id)};this._nodeCtxMenu(e.clientX,e.clientY,n)})
-    if(this._locked.has(n.id))el.classList.add('pin-locked');return el
+    if(this._locked.has(n.id))el.classList.add('pin-locked')
+    return el
   },
 
   _makeImage(n){
