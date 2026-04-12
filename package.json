@@ -1,0 +1,45 @@
+{
+  "name": "scriptum",
+  "version": "0.1.0",
+  "description": "Writing app with canvas boards and Git version control",
+  "main": "src/main/index.js",
+  "homepage": "./",
+  "scripts": {
+    "dev": "concurrently -k \"npm run dev:react\" \"npm run dev:electron\"",
+    "dev:react": "react-scripts start",
+    "dev:electron": "wait-on http://localhost:3000 && NODE_ENV=development electron .",
+    "build": "npm run build:react && electron-builder --mac"
+  },
+  "build": {
+    "appId": "com.scriptum.app",
+    "productName": "Scriptum",
+    "mac": { "category": "public.app-category.productivity", "target": ["dmg"] },
+    "files": ["build/**/*", "src/main/**/*", "node_modules/**/*"]
+  },
+  "dependencies": {
+    "isomorphic-git": "^1.25.6",
+    "@tiptap/react": "^2.4.0",
+    "@tiptap/starter-kit": "^2.4.0",
+    "@tiptap/extension-placeholder": "^2.4.0",
+    "@tiptap/extension-character-count": "^2.4.0",
+    "@tiptap/extension-typography": "^2.4.0",
+    "@tiptap/extension-highlight": "^2.4.0",
+    "@tiptap/extension-underline": "^2.4.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "zustand": "^4.5.0",
+    "uuid": "^10.0.0",
+    "date-fns": "^3.6.0"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0",
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.0",
+    "react-scripts": "5.0.1",
+    "wait-on": "^7.2.0"
+  },
+  "browserslist": {
+    "production": ["last 1 electron version"],
+    "development": ["last 1 electron version"]
+  }
+}
