@@ -360,6 +360,38 @@ const Canvas = {
     setTimeout(()=>{el.textContent=prev;el.style.color=''}, ms)
   },
 
+  // ── Group helpers ────────────────────────────────────────────────────────
+
+  _recomputeGroup(group) {
+    const PAD = 32
+    const members = (group.members || [])
+      .map(id => this._board.nodes.find(n => n.id === id))
+      .filter(Boolean)
+    if (!members.length) return
+    group.x      = Math.min(...members.map(n => n.x)) - PAD
+    group.y      = Math.min(...members.map(n => n.y)) - PAD - 28
+    group.width  = Math.max(...members.map(n => n.x + (n.width  || 220))) + PAD - group.x
+    group.height = Math.max(...members.map(n => n.y + (n.height || 160))) + PAD - group.y
+    const el = document.getElementById(`pin-${group.id}`)
+    if (el) {
+      el.style.left   = group.x + 'px'
+      el.style.top    = group.y + 'px'
+      el.style.width  = group.width  + 'px'
+      el.style.height = group.height + 'px'
+    }
+  },
+
+  // Returns the group whose bounding box contains the center of node, or null
+  _groupAt(node) {
+    const cx = node.x + (node.width  || 220) / 2
+    const cy = node.y + (node.height || 160) / 2
+    return this._board.nodes.find(g =>
+      g.type === 'group' &&
+      cx > g.x && cx < g.x + g.width &&
+      cy > g.y && cy < g.y + g.height
+    ) || null
+  },
+
   async _groupSelected() {
     const ids = [...this._selected]
     if (ids.length < 2) { this._showHint('Shift+click or drag-select 2+ pins first, then group.', 3000); return }
