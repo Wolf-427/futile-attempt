@@ -1,6 +1,11 @@
 const App = {
+  _project: null,
+
   async init() {
-    Store.sub(() => { Store.save(); this.render() })
+    // Only re-render when navigation-relevant keys change
+    Store.sub(['activeId', 'view', 'sidebar', 'boardFile', 'boardStack'], (data, key) => {
+      this.render()
+    })
     this.render()
   },
 
@@ -8,7 +13,8 @@ const App = {
     const s = Store.get()
     const root = document.getElementById('app')
     if (!s.activeId || !Store.project) { this.renderWelcome(root); return }
-    this.renderWorkspace(root, Store.project)
+    this._project = Store.project
+    this.renderWorkspace(root, this._project)
   },
 
   renderWelcome(root) {
@@ -81,8 +87,14 @@ const App = {
       const folder = await api.dialog.folder(); if (!folder) return
       const p = await Project.create(name, folder)
       const projects = [...Store.get('projects'), { id: p.id, name: p.name, dir: p.dir }]
-      Store.set('projects', projects); Store.set('activeId', p.id)
-    } catch (e) { const err = document.getElementById('welcome-err'); if (err) err.textContent = e.message }
+      // Set without triggering listener yet
+      Store._data.projects = projects
+      Store.save()
+      Store.set('activeId', p.id)
+    } catch (e) {
+      const err = document.getElementById('welcome-err')
+      if (err) err.textContent = e.message
+    }
   },
 
   async openProject() {
@@ -92,7 +104,9 @@ const App = {
       const existing = Store.get('projects').find(x => x.dir === folder)
       if (existing) { Store.set('activeId', existing.id); return }
       const projects = [...Store.get('projects'), { id: p.id, name: p.name, dir: p.dir }]
-      Store.set('projects', projects); Store.set('activeId', p.id)
+      Store._data.projects = projects
+      Store.save()
+      Store.set('activeId', p.id)
     } catch (e) { alert(e.message) }
   },
 
@@ -116,8 +130,8 @@ const App = {
           </div>
           <div class="spacer"></div>
           <div class="git-area">
-            <span class="git-branch">⎇ ${s.git.branch}</span>
-            <span class="git-dot ${s.git.dirty ? 'dirty' : 'clean'}" title="${s.git.dirty ? 'Unsaved changes' : 'All saved'}"></span>
+            <span class="git-branch" id="git-branch">⎇ ${s.git.branch}</span>
+            <span class="git-dot ${s.git.dirty ? 'dirty' : 'clean'}" id="git-dot" title="${s.git.dirty ? 'Unsaved changes' : 'All saved'}"></span>
           </div>
         </div>
         <div class="body">
@@ -128,9 +142,15 @@ const App = {
     `
 
     root.querySelectorAll('.nav-btn').forEach(btn => {
-      btn.addEventListener('click', () => Store.set('view', btn.dataset.view))
+      btn.addEventListener('click', () => {
+        // Don't re-render if already on this view
+        if (Store.get('view') !== btn.dataset.view) Store.set('view', btn.dataset.view)
+      })
     })
-    document.getElementById('toggle-sidebar').addEventListener('click', () => Store.set('sidebar', !s.sidebar))
+
+    document.getElementById('toggle-sidebar').addEventListener('click', () => {
+      Store.set('sidebar', !Store.get('sidebar'))
+    })
 
     if (s.sidebar && s.view !== 'settings') this.renderSidebar(project)
 
@@ -159,7 +179,10 @@ const App = {
         if (!name) return
         const p = `${project.dir}/documents/${name}.md`
         await api.fs.write(p, `# ${name}\n\n`)
-        Store.set('docPath', p); Store.set('view', 'editor'); this.renderSidebar(project)
+        // Update docPath without full re-render — just switch view
+        Store._data.docPath = p
+        Store.save()
+        Store.set('view', 'editor')
       }
       inp.addEventListener('keydown', e => { if (e.key === 'Enter') finish(); if (e.key === 'Escape') { inp.remove(); addingDoc = false } })
       inp.addEventListener('blur', () => { if (addingDoc) { inp.remove(); addingDoc = false } })
@@ -178,10 +201,11 @@ const App = {
       this.openBoard(b.file)
     }
     boardsHdr.appendChild(boardsLbl); boardsHdr.appendChild(addBoardBtn); boardsSection.appendChild(boardsHdr)
+
     const masterBtn = document.createElement('button')
     masterBtn.className = 'sidebar-row' + (s.view === 'board' && s.boardFile === 'master.json' ? ' board-active' : '')
     masterBtn.textContent = '◎ Master board'
-    masterBtn.onclick = () => { Store.set('boardFile', 'master.json'); Store.set('view', 'board'); Store.set('boardStack', []) }
+    masterBtn.onclick = () => { this.openBoard('master.json', false) }
     boardsSection.appendChild(masterBtn); container.appendChild(boardsSection)
 
     const footer = document.createElement('div'); footer.className = 'sidebar-footer'
@@ -191,8 +215,11 @@ const App = {
     footer.appendChild(pathBtn); container.appendChild(footer)
 
     Project.readDocs(project.dir).then(docs => {
-      if (!docs.length) { const e = document.createElement('span'); e.className = 'sidebar-empty'; e.textContent = 'No documents yet'; docTree.appendChild(e); return }
-      docs.forEach(n => this._docNode(n, docTree, s.docPath, project))
+      if (!docs.length) {
+        const e = document.createElement('span'); e.className = 'sidebar-empty'; e.textContent = 'No documents yet'
+        docTree.appendChild(e); return
+      }
+      docs.forEach(n => this._docNode(n, docTree, s.docPath))
     })
 
     Project.readBoards(project.dir).then(boards => {
@@ -206,18 +233,30 @@ const App = {
     })
   },
 
-  _docNode(node, container, activePath, project) {
+  _docNode(node, container, activePath) {
     const btn = document.createElement('button')
     if (node.type === 'file') {
       btn.className = 'sidebar-row' + (activePath === node.path ? ' active' : '')
       btn.textContent = `📄 ${node.name}`
-      btn.onclick = () => { Store.set('docPath', node.path); Store.set('view', 'editor') }
+      btn.onclick = () => {
+        // Load doc without full re-render if already in editor view
+        Store._data.docPath = node.path
+        Store.save()
+        if (Store.get('view') === 'editor') {
+          Editor.loadDoc(node.path)
+          // Update active state in sidebar
+          document.querySelectorAll('.sidebar-row.active').forEach(el => el.classList.remove('active'))
+          btn.classList.add('active')
+        } else {
+          Store.set('view', 'editor')
+        }
+      }
       container.appendChild(btn)
     } else {
       btn.className = 'sidebar-row'; btn.textContent = `▾ 📁 ${node.name}`
       container.appendChild(btn)
       const sub = document.createElement('div'); sub.style.paddingLeft = '14px'
-      node.children.forEach(c => this._docNode(c, sub, activePath, project))
+      node.children.forEach(c => this._docNode(c, sub, activePath))
       container.appendChild(sub)
       btn.onclick = () => sub.classList.toggle('hidden')
     }
@@ -225,8 +264,12 @@ const App = {
 
   renderEditor(container, project) {
     const docPath = Store.get('docPath')
-    if (!docPath) { container.innerHTML = '<div class="editor-empty">Select a document from the sidebar</div>'; return }
-    Editor.mount(container); Editor.loadDoc(docPath)
+    if (!docPath) {
+      container.innerHTML = '<div class="editor-empty">Select a document from the sidebar</div>'
+      return
+    }
+    Editor.mount(container)
+    Editor.loadDoc(docPath)
   },
 
   renderBoard(container, project) {
@@ -235,8 +278,13 @@ const App = {
   },
 
   openBoard(file, push = true) {
-    if (push) { const stack = Store.get('boardStack'); Store.set('boardStack', [...stack, Store.get('boardFile')]) }
-    Store.set('boardFile', file); Store.set('view', 'board')
+    if (push) {
+      const stack = Store.get('boardStack')
+      Store._data.boardStack = [...stack, Store.get('boardFile')]
+    }
+    Store._data.boardFile = file
+    Store.save()
+    Store.set('view', 'board')
   }
 }
 
