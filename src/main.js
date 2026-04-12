@@ -3,8 +3,6 @@ const path = require('path')
 const fs = require('fs').promises
 const fss = require('fs')
 
-const isDev = process.env.NODE_ENV === 'development'
-
 let win
 
 const createWindow = () => {
@@ -17,13 +15,12 @@ const createWindow = () => {
     trafficLightPosition: { x: 16, y: 16 },
     backgroundColor: '#0f0f0d',
     webPreferences: {
-      preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,
+      preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
     },
   })
-
-  win.loadURL(MAIN_WINDOW_WEBPACK_ENTRY)
+  win.loadFile(path.join(__dirname, 'renderer/index.html'))
 }
 
 app.whenReady().then(() => {
@@ -37,7 +34,6 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 
-// ── Store ─────────────────────────────────────────────────
 const STORE_PATH = path.join(app.getPath('userData'), 'scriptum.json')
 const readStore = async () => { try { return JSON.parse(await fs.readFile(STORE_PATH, 'utf8')) } catch { return {} } }
 const writeStore = async d => fs.writeFile(STORE_PATH, JSON.stringify(d, null, 2))
@@ -48,7 +44,6 @@ function setupStore() {
   ipcMain.handle('store:del', async (_, k) => { const s = await readStore(); delete s[k]; await writeStore(s); return true })
 }
 
-// ── File system ───────────────────────────────────────────
 function setupFs() {
   ipcMain.handle('fs:read',    (_, p) => fs.readFile(p, 'utf8'))
   ipcMain.handle('fs:readBin', async (_, p) => (await fs.readFile(p)).toString('base64'))
@@ -63,7 +58,6 @@ function setupFs() {
   ipcMain.handle('app:version', () => app.getVersion())
 }
 
-// ── Dialogs ───────────────────────────────────────────────
 function setupDialogs() {
   ipcMain.handle('dialog:folder', async () => {
     const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] })
@@ -75,10 +69,8 @@ function setupDialogs() {
   })
 }
 
-// ── Updater ───────────────────────────────────────────────
 function setupUpdater() {
   const { net } = require('electron')
-
   ipcMain.handle('update:check', async (_, token, owner, repo) => {
     try {
       const headers = { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'Scriptum' }
@@ -89,11 +81,9 @@ function setupUpdater() {
       return { hasUpdate: data.sha !== (s['current-sha'] || null), latestSha: data.sha, message: data.commit?.message || '' }
     } catch (e) { return { error: e.message } }
   })
-
   ipcMain.handle('update:apply', async (_, token, owner, repo, sha) => {
     try {
-      const { net } = require('electron')
-      const appDir = app.isPackaged ? path.dirname(app.getPath('exe')) : path.join(__dirname, '..')
+      const appDir = path.join(__dirname, '..')
       const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'Scriptum' }
       const s = await readStore()
       const currentSha = s['current-sha']
@@ -120,6 +110,5 @@ function setupUpdater() {
       return { ok: true, filesUpdated: files.length }
     } catch (e) { return { ok: false, error: e.message } }
   })
-
   ipcMain.handle('update:restart', () => { app.relaunch(); app.exit(0) })
 }
