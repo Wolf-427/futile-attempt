@@ -205,44 +205,39 @@ const Canvas = {
           if (node) { node.x=Math.round(wx-this._drag.offX); node.y=Math.round(wy-this._drag.offY); const el=document.getElementById(`pin-${node.id}`); if(el){el.style.left=node.x+'px';el.style.top=node.y+'px'} }
         }
         this._renderArrows()
-        // Live-preview group expansion while dragging a node over it
+        // Live-preview group resize while dragging a node
         if (this._drag.type === 'node') {
           const node = this._board.nodes.find(n => n.id === this._drag.id)
-          // Clear all highlights first
-          document.querySelectorAll('.group-drop-target').forEach(el => el.classList.remove('group-drop-target'))
-          // Restore any previously previewed group
-          if (this._previewGroup) {
-            const gel = document.getElementById(`pin-${this._previewGroup.id}`)
-            if (gel) {
-              gel.style.left   = this._previewGroup.origX + 'px'
-              gel.style.top    = this._previewGroup.origY + 'px'
-              gel.style.width  = this._previewGroup.origW + 'px'
-              gel.style.height = this._previewGroup.origH + 'px'
-            }
-            this._previewGroup = null
-          }
           if (node && node.type !== 'group') {
-            const hovered = this._groupAt(node)
-            if (hovered && !hovered.members?.includes(node.id)) {
-              // Save original bounds for restore
-              this._previewGroup = { id: hovered.id, origX: hovered.x, origY: hovered.y, origW: hovered.width, origH: hovered.height }
-              // Compute what the group would look like with this node included
-              const PAD = 32
-              const members = (hovered.members || [])
-                .map(id => this._board.nodes.find(n => n.id === id)).filter(Boolean)
-              members.push(node)
-              const preX = Math.min(...members.map(n => n.x)) - PAD
-              const preY = Math.min(...members.map(n => n.y)) - PAD - 28
-              const preW = Math.max(...members.map(n => n.x + (n.width  || 220))) + PAD - preX
-              const preH = Math.max(...members.map(n => n.y + (n.height || 160))) + PAD - preY
-              const gel = document.getElementById(`pin-${hovered.id}`)
-              if (gel) {
-                gel.classList.add('group-drop-target')
-                gel.style.left   = preX + 'px'
-                gel.style.top    = preY + 'px'
-                gel.style.width  = preW + 'px'
-                gel.style.height = preH + 'px'
+            // Which group is this node currently a member of?
+            const memberOf = this._board.nodes.find(g => g.type === 'group' && g.members?.includes(node.id)) || null
+            // Which group is the node's center currently hovering over?
+            const hovering = this._groupAt(node)
+
+            // Restore all previews first (using stored data, not DOM state)
+            this._board.nodes.filter(g => g.type === 'group').forEach(g => this._restoreGroupDOM(g))
+
+            if (hovering) {
+              if (memberOf && memberOf.id === hovering.id) {
+                // Inside its own group — preview with node at current position
+                const b = this._computeGroupBounds(hovering, node, node.id)
+                if (b) this._previewGroupDOM(hovering, b)
+              } else {
+                // Hovering over a different group — preview adding node
+                const b = this._computeGroupBounds(hovering, node, null)
+                if (b) this._previewGroupDOM(hovering, b)
+                // If leaving a group, preview that group shrinking
+                if (memberOf) {
+                  const b2 = this._computeGroupBounds(memberOf, null, node.id)
+                  if (b2) this._previewGroupDOM(memberOf, b2)
+                  else this._restoreGroupDOM(memberOf)
+                }
               }
+            } else if (memberOf) {
+              // Node dragged outside all groups — preview memberOf shrinking
+              const b = this._computeGroupBounds(memberOf, null, node.id)
+              if (b) this._previewGroupDOM(memberOf, b)
+              else this._restoreGroupDOM(memberOf)
             }
           }
         }
@@ -274,16 +269,8 @@ const Canvas = {
       this._area.style.cursor = 'default'
       // Clear highlight and restore any live preview before computing membership
       document.querySelectorAll('.group-drop-target').forEach(el => el.classList.remove('group-drop-target'))
-      if (this._previewGroup) {
-        const gel = document.getElementById(`pin-${this._previewGroup.id}`)
-        if (gel) {
-          gel.style.left   = this._previewGroup.origX + 'px'
-          gel.style.top    = this._previewGroup.origY + 'px'
-          gel.style.width  = this._previewGroup.origW + 'px'
-          gel.style.height = this._previewGroup.origH + 'px'
-        }
-        this._previewGroup = null
-      }
+      // Restore all group DOMs to their stored data bounds before computing membership
+      this._board?.nodes?.filter(g => g.type === 'group').forEach(g => this._restoreGroupDOM(g))
 
       if (this._panning) { this._panning = false; return }
 
@@ -410,10 +397,12 @@ const Canvas = {
       .map(id => this._board.nodes.find(n => n.id === id))
       .filter(Boolean)
     if (!members.length) return
+    // Update the data object
     group.x      = Math.min(...members.map(n => n.x)) - PAD
     group.y      = Math.min(...members.map(n => n.y)) - PAD - 28
     group.width  = Math.max(...members.map(n => n.x + (n.width  || 220))) + PAD - group.x
     group.height = Math.max(...members.map(n => n.y + (n.height || 160))) + PAD - group.y
+    // Update DOM
     const el = document.getElementById(`pin-${group.id}`)
     if (el) {
       el.style.left   = group.x + 'px'
@@ -423,7 +412,24 @@ const Canvas = {
     }
   },
 
-  // Returns the group whose bounding box contains the center of node, or null
+  // Compute what a group's bounds would be with extraNode included or excluded
+  _computeGroupBounds(group, includeNode, excludeNodeId) {
+    const PAD = 32
+    let members = (group.members || [])
+      .filter(id => id !== excludeNodeId)
+      .map(id => this._board.nodes.find(n => n.id === id))
+      .filter(Boolean)
+    if (includeNode) members = [...members, includeNode]
+    if (!members.length) return null
+    const x = Math.min(...members.map(n => n.x)) - PAD
+    const y = Math.min(...members.map(n => n.y)) - PAD - 28
+    const w = Math.max(...members.map(n => n.x + (n.width  || 220))) + PAD - x
+    const h = Math.max(...members.map(n => n.y + (n.height || 160))) + PAD - y
+    return { x, y, w, h }
+  },
+
+  // Uses the group's STORED data bounds (not any live preview)
+  // so hit-testing is always stable
   _groupAt(node) {
     const cx = node.x + (node.width  || 220) / 2
     const cy = node.y + (node.height || 160) / 2
@@ -432,6 +438,28 @@ const Canvas = {
       cx > g.x && cx < g.x + g.width &&
       cy > g.y && cy < g.y + g.height
     ) || null
+  },
+
+  // Preview group bounds in DOM without touching the data object
+  _previewGroupDOM(group, bounds) {
+    const el = document.getElementById(`pin-${group.id}`)
+    if (!el) return
+    el.classList.add('group-drop-target')
+    el.style.left   = bounds.x + 'px'
+    el.style.top    = bounds.y + 'px'
+    el.style.width  = bounds.w + 'px'
+    el.style.height = bounds.h + 'px'
+  },
+
+  // Restore group DOM to match its data object
+  _restoreGroupDOM(group) {
+    const el = document.getElementById(`pin-${group.id}`)
+    if (!el) return
+    el.classList.remove('group-drop-target')
+    el.style.left   = group.x + 'px'
+    el.style.top    = group.y + 'px'
+    el.style.width  = group.width  + 'px'
+    el.style.height = group.height + 'px'
   },
 
   async _groupSelected() {
