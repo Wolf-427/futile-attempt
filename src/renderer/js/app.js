@@ -58,6 +58,8 @@ const App = {
 
           <!-- Main area -->
           <div class="splash-main">
+            <div class="splash-welcome" id="splash-welcome"></div>
+
             <div class="splash-main-header">
               <div class="splash-main-title">Recent projects</div>
             </div>
@@ -95,6 +97,34 @@ const App = {
         Store.set('activeId', card.dataset.id)
       })
     })
+
+    // Rotating welcome messages
+    const messages = [
+      'What are you writing today?',
+      'Every great story begins with a single word.',
+      'Your ideas deserve a beautiful home.',
+      'Ready when you are.',
+      'Good writers write. Great writers rewrite.',
+      'The page is waiting.',
+      'Where were we?',
+      'Blank pages are full of possibilities.',
+      'Words have power. Use them well.',
+      'Time to make something.',
+    ]
+    const welcomeEl = document.getElementById('splash-welcome')
+    if (welcomeEl) {
+      let idx = Math.floor(Math.random() * messages.length)
+      welcomeEl.textContent = messages[idx]
+      welcomeEl.classList.add('splash-welcome-visible')
+      setInterval(() => {
+        welcomeEl.classList.remove('splash-welcome-visible')
+        setTimeout(() => {
+          idx = (idx + 1) % messages.length
+          welcomeEl.textContent = messages[idx]
+          welcomeEl.classList.add('splash-welcome-visible')
+        }, 600)
+      }, 5000)
+    }
 
     // Load covers async and inject without re-render
     ;(async () => {
