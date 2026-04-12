@@ -123,13 +123,15 @@ function setupUpdater() {
       const s = await readStore()
       const installedSha = s['installed-sha']
       let files = []
-      if (installedSha) {
+      if (installedSha && installedSha !== sha) {
         const res = await net.fetch(`https://api.github.com/repos/${owner}/${repo}/compare/${installedSha}...${sha}`, { headers })
         const cmp = await res.json()
         files = (cmp.files || [])
           .filter(f => f.status !== 'removed' && f.filename.startsWith('src/'))
           .map(f => f.filename)
-      } else {
+        // If compare returns nothing, fall through to full download
+      }
+      if (!files.length) {
         const res = await net.fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/${sha}?recursive=1`, { headers })
         const tree = await res.json()
         files = (tree.tree || []).filter(f => f.type === 'blob' && f.path.startsWith('src/')).map(f => f.path)
