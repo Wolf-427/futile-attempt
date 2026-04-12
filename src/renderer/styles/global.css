@@ -1,0 +1,47 @@
+@import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;1,400&family=DM+Sans:wght@300;400;500&display=swap');
+
+:root {
+  --bg:    #0f0f0d;
+  --bg1:   #171714;
+  --bg2:   #1e1e1a;
+  --bg3:   #252520;
+  --bgh:   #2a2a25;
+  --bga:   #303028;
+  --b0:    rgba(255,255,255,0.05);
+  --b1:    rgba(255,255,255,0.09);
+  --b2:    rgba(255,255,255,0.16);
+  --tx:    #e8e6df;
+  --tx2:   #9a9890;
+  --tx3:   #5a5855;
+  --accent:#c9a96e;
+  --ok:    #4caf82;
+  --err:   #e07070;
+  --ny-bg: #2a2510; --ny-b: #6b5a20; --ny-t: #e8d89a;
+  --nb-bg: #0f1a28; --nb-b: #1e3a5a; --nb-t: #8abcde;
+  --ng-bg: #0f1f12; --ng-b: #1e4a24; --ng-t: #8acf95;
+  --np-bg: #1a1028; --np-b: #3a1e5a; --np-t: #b08acf;
+  --sans:  'DM Sans', system-ui, sans-serif;
+  --serif: 'Lora', Georgia, serif;
+  --mono:  'SF Mono', 'Fira Code', monospace;
+  --r:  4px; --r2: 8px; --r3: 12px;
+  --th: 52px; --sw: 220px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--tx);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--b1); border-radius: 3px; }
+::selection { background: rgba(201,169,110,0.2); }
+button { font-family: var(--sans); cursor: pointer; }

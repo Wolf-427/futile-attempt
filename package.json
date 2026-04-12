@@ -1,0 +1,72 @@
+{
+  "name": "scriptum",
+  "productName": "Scriptum",
+  "version": "0.1.0",
+  "description": "A writing app with spatial canvas boards",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron-forge start",
+    "make": "electron-forge make"
+  },
+  "config": {
+    "forge": {
+      "packagerConfig": {
+        "name": "Scriptum",
+        "osxSign": {}
+      },
+      "makers": [
+        {
+          "name": "@electron-forge/maker-dmg",
+          "platforms": ["darwin"]
+        }
+      ],
+      "plugins": [
+        {
+          "name": "@electron-forge/plugin-webpack",
+          "config": {
+            "mainConfig": "./webpack.main.config.js",
+            "renderer": {
+              "config": "./webpack.renderer.config.js",
+              "entryPoints": [
+                {
+                  "html": "./src/renderer/index.html",
+                  "js": "./src/renderer/index.jsx",
+                  "name": "main_window",
+                  "preload": {
+                    "js": "./src/preload.js"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  },
+  "dependencies": {
+    "@tiptap/extension-character-count": "^2.4.0",
+    "@tiptap/extension-highlight": "^2.4.0",
+    "@tiptap/extension-placeholder": "^2.4.0",
+    "@tiptap/extension-typography": "^2.4.0",
+    "@tiptap/extension-underline": "^2.4.0",
+    "@tiptap/react": "^2.4.0",
+    "@tiptap/starter-kit": "^2.4.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "uuid": "^10.0.0",
+    "zustand": "^4.5.0"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "^7.4.0",
+    "@electron-forge/maker-dmg": "^7.4.0",
+    "@electron-forge/plugin-webpack": "^7.4.0",
+    "@babel/core": "^7.24.0",
+    "@babel/preset-env": "^7.24.0",
+    "@babel/preset-react": "^7.24.0",
+    "babel-loader": "^9.1.0",
+    "css-loader": "^7.1.0",
+    "style-loader": "^4.0.0",
+    "electron": "^31.0.0",
+    "node-loader": "^2.0.0"
+  }
+}
