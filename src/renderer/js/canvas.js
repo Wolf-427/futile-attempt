@@ -947,13 +947,13 @@ const Canvas = {
   _makeText(n) {
     const el = document.createElement('div')
     el.id = `pin-${n.id}`; el.className = 'pin pin-text'
-    el.style.cssText = `left:${n.x}px;top:${n.y}px;width:${n.width||220}px;min-height:${n.height||60}px;position:absolute;z-index:2;display:flex;flex-direction:column;`
+    el.style.cssText = `left:${n.x}px;top:${n.y}px;width:${n.width||220}px;height:${n.height||60}px;position:absolute;z-index:2;display:flex;flex-direction:column;overflow:hidden;`
 
     const content = document.createElement('div')
     content.className = 'pin-text-content'
     content.contentEditable = 'false'
     content.innerHTML = n.html || (n.text ? n.text.replace(/&/g,'&amp;').replace(/</g,'&lt;') : '')
-    content.style.cssText = `font-size:${n.fontSize||16}px;color:${n.color||'var(--tx)'};outline:none;cursor:default;word-break:break-word;flex:1;padding:6px 8px;line-height:1.5;font-family:var(--sans);`
+    content.style.cssText = `font-size:${n.fontSize||16}px;color:${n.color||'var(--tx)'};outline:none;cursor:default;word-break:break-word;flex:1;padding:6px 8px;line-height:1.5;font-family:var(--sans);text-align:${n.align||'left'};`
     el.appendChild(content)
 
     // Floating format toolbar — shown when text is selected inside content
@@ -985,31 +985,50 @@ const Canvas = {
     fmtBigger.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); n.fontSize=Math.min(96,(n.fontSize||16)+2); content.style.fontSize=n.fontSize+'px'; fmtSzLabel.textContent=n.fontSize+'px'; this._persist() })
     fmt.appendChild(fmtBigger)
 
+    // Alignment buttons
+    const alignSep = document.createElement('div'); alignSep.style.cssText='width:1px;height:14px;background:rgba(255,255,255,0.12);margin:0 3px;'; fmt.appendChild(alignSep)
+    const alignBtns = {}
+    const setAlign = (val) => {
+      n.align = val; content.style.textAlign = val
+      for (const a of ['left','center','right']) alignBtns[a].style.background = a===val ? 'rgba(255,255,255,0.15)' : ''
+      this._persist()
+    }
+    for (const [val, label, title] of [['left','←','Align left'],['center','↔','Align center'],['right','→','Align right']]) {
+      const b = document.createElement('button'); b.className='text-fmt-btn'; b.textContent=label; b.title=title
+      b.style.background = (n.align||'left')===val ? 'rgba(255,255,255,0.15)' : ''
+      b.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); setAlign(val) })
+      fmt.appendChild(b); alignBtns[val] = b
+    }
+
     const updateFmt = () => {
       try {
         boldBtn.style.background   = document.queryCommandState('bold')   ? 'rgba(255,255,255,0.15)' : ''
         italicBtn.style.background = document.queryCommandState('italic') ? 'rgba(255,255,255,0.15)' : ''
         ulBtn.style.background     = document.queryCommandState('insertUnorderedList') ? 'rgba(255,255,255,0.15)' : ''
         fmtSzLabel.textContent = (n.fontSize||16)+'px'
+        const cur = n.align || 'left'
+        for (const a of ['left','center','right']) alignBtns[a].style.background = a===cur ? 'rgba(255,255,255,0.15)' : ''
       } catch {}
     }
 
     const positionFmt = () => {
+      if (content.contentEditable !== 'true') { fmt.style.display='none'; return }
       const sel = window.getSelection()
-      if (!sel || sel.isCollapsed || !sel.rangeCount) { fmt.style.display='none'; return }
-      // Check selection is inside this content
-      const range = sel.getRangeAt(0)
-      if (!content.contains(range.commonAncestorContainer)) { fmt.style.display='none'; return }
-      const rect = range.getBoundingClientRect()
-      if (!rect.width) { fmt.style.display='none'; return }
+      const hasSel = sel && !sel.isCollapsed && sel.rangeCount && content.contains(sel.getRangeAt(0).commonAncestorContainer)
       fmt.style.display = 'flex'
-      // Position above the selection
-      const fw = fmt.offsetWidth || 200
-      let x = rect.left + rect.width/2 - fw/2
-      let y = rect.top - 40
+      const fw = fmt.offsetWidth || 220
+      let x, y
+      if (hasSel) {
+        const rect = sel.getRangeAt(0).getBoundingClientRect()
+        if (rect.width) { x = rect.left + rect.width/2 - fw/2; y = rect.top - 44 }
+      }
+      if (x === undefined) {
+        const rect = el.getBoundingClientRect()
+        x = rect.left + rect.width/2 - fw/2; y = rect.top - 44
+      }
       if (x < 8) x = 8
       if (x + fw > window.innerWidth - 8) x = window.innerWidth - fw - 8
-      if (y < 8) y = rect.bottom + 8
+      if (y < 8) y = el.getBoundingClientRect().bottom + 8
       fmt.style.left = x + 'px'; fmt.style.top = y + 'px'
       updateFmt()
     }
@@ -1027,7 +1046,7 @@ const Canvas = {
     }
     el.addEventListener('dblclick', e => { e.stopPropagation(); startEdit() })
 
-    content.addEventListener('focus',  () => { content.contentEditable='true'; content.style.cursor='text' })
+    content.addEventListener('focus',  () => { content.contentEditable='true'; content.style.cursor='text'; requestAnimationFrame(positionFmt) })
     content.addEventListener('blur',   () => {
       content.contentEditable='false'; content.style.cursor='default'
       fmt.style.display='none'
@@ -1035,16 +1054,13 @@ const Canvas = {
     })
     content.addEventListener('keydown', e => { e.stopPropagation(); if(e.key==='Escape') content.blur() })
 
-    // Auto-grow: keep el height in sync with content so border never clips
-    const syncHeight = () => {
-      // Allow natural shrink: temporarily remove minHeight to measure true content height
-      el.style.minHeight = '30px'
-      const needed = Math.max(30, content.scrollHeight + 16)
-      n.height = needed
-      el.style.minHeight = needed + 'px'
-    }
-    content.addEventListener('input', () => requestAnimationFrame(syncHeight))
-    content.addEventListener('focus', () => requestAnimationFrame(syncHeight))
+    content.addEventListener('input', () => {
+      // Only grow — never shrink — to drawn/resized height
+      if (content.scrollHeight + 16 > el.offsetHeight) {
+        n.height = content.scrollHeight + 16
+        el.style.height = n.height + 'px'
+      }
+    })
     content.addEventListener('mouseup', () => setTimeout(positionFmt, 10))
     content.addEventListener('keyup',  () => setTimeout(positionFmt, 10))
 
