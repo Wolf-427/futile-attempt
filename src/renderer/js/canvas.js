@@ -20,6 +20,12 @@ const Canvas = {
   _lastMouse:  { x: 0, y: 0 },
   _history:    [],
   _histIdx:    -1,
+  _persistTimer: null,
+
+  _persistDebounced() {
+    clearTimeout(this._persistTimer)
+    this._persistTimer = setTimeout(() => this._persist(), 1000)
+  },
 
   // Custom prompt — replaces native prompt() which is blocked in Electron
   _prompt(message, defaultVal = '') {
@@ -195,6 +201,8 @@ const Canvas = {
         this._pan.x=px-(px-this._pan.x)*this._zoom/old; this._pan.y=py-(py-this._pan.y)*this._zoom/old
       } else { this._pan.x-=e.deltaX; this._pan.y-=e.deltaY }
       this._applyTransform()
+    // Debounced persist for pan/zoom could be added here, 
+    // but for now we'll persist on MouseUp after a manual pan.
     }, {passive:false})
 
     // Middle-click / alt+drag = pan
@@ -322,7 +330,13 @@ const Canvas = {
       if (this._resize) {
         const dx=e.clientX-this._resize.startX, dy=e.clientY-this._resize.startY
         const node=this._board.nodes.find(n=>n.id===this._resize.id)
-        if (node) { node.width=Math.max(120,Math.round(this._resize.startW+dx/this._zoom)); node.height=Math.max(80,Math.round(this._resize.startH+dy/this._zoom)); const el=document.getElementById(`pin-${node.id}`); if(el){el.style.width=node.width+'px'; if(node.type==='text'){el.style.minHeight=node.height+'px';el.style.height=''}else{el.style.height=node.height+'px'}} }
+        if (node) { 
+          node.width=Math.max(120,Math.round(this._resize.startW+dx/this._zoom))
+          node.height=Math.max(80,Math.round(this._resize.startH+dy/this._zoom))
+          const el=document.getElementById(`pin-${node.id}`)
+          if(el){el.style.width=node.width+'px'; if(node.type==='text'){el.style.minHeight=node.height+'px';el.style.height=''}else{el.style.height=node.height+'px'}}
+          this._renderArrows() 
+        }
         return
       }
 
@@ -357,7 +371,11 @@ const Canvas = {
       document.querySelectorAll('.group-drop-target').forEach(el => el.classList.remove('group-drop-target'))
       this._board?.nodes?.filter(g => g.type === 'group').forEach(g => this._restoreGroupDOM(g))
 
-      if (this._panning) { this._panning = false; return }
+      if (this._panning) { 
+        this._panning = false
+        this._persist() // Save the new position
+        return 
+      }
 
       // ── Finalize arrow drag ─────────────────────────────────────────────────
       if (this._arrowDrag) {
@@ -461,6 +479,9 @@ const Canvas = {
       this._resize = null
       if (this._marquee) { this._marquee = null; document.getElementById('cv-marquee')?.classList.add('hidden') }
     })
+
+    // Refresh arrows when window resizes as anchor screen-positions change
+    window.addEventListener('resize', () => this._renderArrows())
 
     // Right-click on canvas background
     this._area.addEventListener('contextmenu', e => {
@@ -794,9 +815,12 @@ const Canvas = {
 
   _applyTransform() {
     this._zoom=Math.min(4,Math.max(0.1,this._zoom))
-    this._world.style.transform=`translate(${this._pan.x}px,${this._pan.y}px) scale(${this._zoom})`
     const zm=document.getElementById('cv-zoom'); if(zm) zm.textContent=`${Math.round(this._zoom*100)}%`
-    this._renderArrows(); this._updateMinimap()
+    requestAnimationFrame(() => {
+      this._world.style.transform=`translate3d(${this._pan.x}px,${this._pan.y}px,0) scale(${this._zoom})`
+      this._renderArrows()
+      this._updateMinimap()
+    })
   },
 
   // ── Arrows (viewport-fixed SVG, screen-space coords) ─────────────────────
@@ -822,29 +846,19 @@ const Canvas = {
 
   _renderArrows() {
     const svg=this._svg; if(!svg) return
-    svg.innerHTML=''
+    // Only clear paths, keep defs/markers
+    const existingPaths = svg.querySelectorAll('path:not(#cv-arrow-preview)')
+    existingPaths.forEach(p => p.remove())
+    
     const arrows=this._board?.arrows||[]; if(!arrows.length) return
 
+    // Pre-defined colors for the render loop
     const COLORS = {
-      default: {stroke:'rgba(201,169,110,0.8)', head:'rgba(201,169,110,0.95)'},
-      red:     {stroke:'rgba(220,80,80,0.8)',   head:'rgba(220,80,80,0.95)'},
-      blue:    {stroke:'rgba(80,140,255,0.8)',  head:'rgba(80,140,255,0.95)'},
-      green:   {stroke:'rgba(80,195,120,0.8)',  head:'rgba(80,195,120,0.95)'},
+      default: {stroke:'rgba(201,169,110,0.8)'},
+      red:     {stroke:'rgba(220,80,80,0.8)'},
+      blue:    {stroke:'rgba(80,140,255,0.8)'},
+      green:   {stroke:'rgba(80,195,120,0.8)'},
     }
-
-    const defs=document.createElementNS('http://www.w3.org/2000/svg','defs')
-    for (const [key,c] of Object.entries(COLORS)) {
-      for (const sel of [false,true]) {
-        const mk=document.createElementNS('http://www.w3.org/2000/svg','marker')
-        mk.setAttribute('id',`cvmk-${key}${sel?'-sel':''}`)
-        mk.setAttribute('markerWidth','8');mk.setAttribute('markerHeight','6')
-        mk.setAttribute('refX','7');mk.setAttribute('refY','3');mk.setAttribute('orient','auto')
-        const pl=document.createElementNS('http://www.w3.org/2000/svg','polygon')
-        pl.setAttribute('points','0 0,8 3,0 6');pl.setAttribute('fill', sel?'#fff':c.head)
-        mk.appendChild(pl);defs.appendChild(mk)
-      }
-    }
-    svg.appendChild(defs)
 
     let barArrow=null, barMx=0, barMy=0
     for (const a of arrows) {
@@ -998,10 +1012,21 @@ const Canvas = {
     try{this._board=JSON.parse(await api.fs.read(`${this._dir}/boards/${this._file}`))}
     catch{this._board={name:'Board',nodes:[],arrows:[]}}
     if(!this._board.arrows) this._board.arrows=[]
-    this._buildToolbar(); this._renderAll(); this._setMode('select'); this._snapshot()
+
+    // Restore view state if it exists in the file
+    if (this._board.viewState) {
+      this._pan = this._board.viewState.pan || { x: 80, y: 80 }
+      this._zoom = this._board.viewState.zoom || 1
+    }
+
+    this._buildToolbar(); this._renderAll(); this._setMode('select'); this._snapshot(); this._applyTransform()
   },
 
-  async _persist(){await Project.saveBoard(this._dir,this._file,this._board);Store.patch('git',{dirty:true})},
+  async _persist(){
+    this._board.viewState = { pan: this._pan, zoom: this._zoom }
+    await Project.saveBoard(this._dir,this._file,this._board)
+    Store.patch('git',{dirty:true})
+  },
 
   _snapshot(){
     const snap=JSON.stringify({nodes:this._board.nodes,arrows:this._board.arrows})

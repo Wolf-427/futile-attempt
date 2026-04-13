@@ -7,6 +7,8 @@ const Store = {
   },
   _listeners: [],
 
+  _saveTimer: null,
+
   get(k) { return k ? this._data[k] : this._data },
 
   set(k, v) {
@@ -16,7 +18,14 @@ const Store = {
   },
 
   patch(k, v) {
-    this._data[k] = { ...this._data[k], ...v }
+    if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+      this._data[k] = { 
+        ...(typeof this._data[k] === 'object' ? this._data[k] : {}), 
+        ...v 
+      }
+    } else {
+      this._data[k] = v
+    }
     if (k !== 'git') this._notify(k)
     this.save()
   },
@@ -69,15 +78,18 @@ const Store = {
   },
 
   save() {
-    try {
-      localStorage.setItem('scriptum-store', JSON.stringify({
-        projects:  this._data.projects,
-        activeId:  this._data.activeId,
-        docPath:   this._data.docPath,
-        sidebar:   this._data.sidebar,
-        boardFile: this._data.boardFile,
-      }))
-    } catch(e) { console.error('Store save error:', e) }
+    clearTimeout(this._saveTimer)
+    this._saveTimer = setTimeout(() => {
+      try {
+        localStorage.setItem('scriptum-store', JSON.stringify({
+          projects:  this._data.projects,
+          activeId:  this._data.activeId,
+          docPath:   this._data.docPath,
+          sidebar:   this._data.sidebar,
+          boardFile: this._data.boardFile,
+        }))
+      } catch(e) { console.error('Store save error:', e) }
+    }, 100)
   }
 }
 

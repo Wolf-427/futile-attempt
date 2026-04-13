@@ -1,11 +1,28 @@
 const App = {
 
-  init() {
+  async init() {
+    const start = Date.now()
+    // Ensure the last active project still exists on disk before rendering
+    await Store.verifyProject()
+
     Store.sub(['activeId', 'view', 'sidebar', 'boardFile', 'boardStack'], () => {
       this.render()
     })
+
     this._bindGlobalKeys()
     this.render()
+
+    // Dismiss the loading screen overlay defined in index.html/app.css
+    const ls = document.getElementById('ls')
+    if (ls) {
+      // Ensure at least 1000ms has passed since startup to show the animation
+      const wait = Math.max(0, 1000 - (Date.now() - start))
+      setTimeout(() => {
+        ls.classList.add('ls-out')
+        // Remove from DOM after the opacity transition (0.45s) finishes
+        setTimeout(() => ls.remove(), 500)
+      }, wait)
+    }
   },
 
   _bindGlobalKeys() {
