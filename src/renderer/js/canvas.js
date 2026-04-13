@@ -197,6 +197,8 @@ const Canvas = {
     this._area.addEventListener('mousedown', e => {
       if (e.button===2) return
       if (e.button===1||(e.button===0&&e.altKey)) { this._panning=true; this._lastMouse={x:e.clientX,y:e.clientY}; this._area.style.cursor='grabbing'; e.preventDefault(); return }
+      // Text mode is handled by the window capture listener — don't start a marquee
+      if (this._mode === 'text') return
       // For all other modes, only react to clicks on bare canvas background
       if (e.target!==this._area&&e.target!==this._world) return
       // Cancel connect
@@ -306,6 +308,7 @@ const Canvas = {
       if (this._textDraw) {
         const r=this._area.getBoundingClientRect()
         const cx=e.clientX-r.left, cy=e.clientY-r.top
+        this._textDraw.endX = cx; this._textDraw.endY = cy  // track for mouseup
         const x=Math.min(cx,this._textDraw.startX), y=Math.min(cy,this._textDraw.startY)
         const w=Math.max(1,Math.abs(cx-this._textDraw.startX)), h=Math.max(1,Math.abs(cy-this._textDraw.startY))
         const ghost=document.getElementById('cv-text-ghost')
@@ -327,7 +330,7 @@ const Canvas = {
       }
     })
 
-    window.addEventListener('mouseup', e => {
+    window.addEventListener('mouseup', _e => {
       this._area.style.cursor = 'default'
       document.querySelectorAll('.group-drop-target').forEach(el => el.classList.remove('group-drop-target'))
       this._board?.nodes?.filter(g => g.type === 'group').forEach(g => this._restoreGroupDOM(g))
@@ -339,9 +342,9 @@ const Canvas = {
         const ghost = document.getElementById('cv-text-ghost')
         if (ghost) ghost.style.display = 'none'
 
-        const r = this._area.getBoundingClientRect()
-        const ex = e.clientX - r.left
-        const ey = e.clientY - r.top
+        // Use the last tracked mouse position from mousemove (more reliable than e.clientX/Y on mouseup)
+        const ex = this._textDraw.endX ?? this._textDraw.startX
+        const ey = this._textDraw.endY ?? this._textDraw.startY
         const rawW = Math.abs(ex - this._textDraw.startX)
         const rawH = Math.abs(ey - this._textDraw.startY)
         const wasDrag = rawW > 6 || rawH > 6
