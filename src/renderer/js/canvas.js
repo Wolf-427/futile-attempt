@@ -334,8 +334,8 @@ const Canvas = {
           let nw = Math.max(120, Math.round(this._resize.startW + dx / this._zoom))
           let nh = Math.max(40, Math.round(this._resize.startH + dy / this._zoom))
 
+          // Proportional scaling for images
           if (node.type === 'image' && node.aspectRatio) {
-            // Lock ratio based on the axis with the most movement
             if (Math.abs(dx) > Math.abs(dy)) {
               nh = Math.round(nw / node.aspectRatio)
             } else {
@@ -343,9 +343,7 @@ const Canvas = {
             }
           }
 
-          node.width = nw
-          node.height = nh
-
+          node.width = nw; node.height = nh
           const el=document.getElementById(`pin-${node.id}`)
           if(el){ el.style.width=node.width+'px'; el.style.height=node.height+'px' }
           this._renderArrows() 
@@ -881,31 +879,6 @@ const Canvas = {
     const existingPaths = svg.querySelectorAll('path:not(#cv-arrow-preview)')
     existingPaths.forEach(p => p.remove())
     
-    // Initialize markers if they don't exist
-    if (!svg.querySelector('defs')) {
-      const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs')
-      const markerColors = {
-        default: 'rgba(201,169,110,0.95)',
-        red:     'rgba(220,80,80,0.95)',
-        blue:    'rgba(80,140,255,0.95)',
-        green:   'rgba(80,195,120,0.95)',
-      }
-      for (const [key, color] of Object.entries(markerColors)) {
-        for (const sel of [false, true]) {
-          const mk = document.createElementNS('http://www.w3.org/2000/svg', 'marker')
-          mk.setAttribute('id', `cvmk-${key}${sel ? '-sel' : ''}`)
-          mk.setAttribute('markerWidth', '8'); mk.setAttribute('markerHeight', '6')
-          mk.setAttribute('refX', '7'); mk.setAttribute('refY', '3'); mk.setAttribute('orient', 'auto')
-          const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon')
-          poly.setAttribute('points', '0 0, 8 3, 0 6')
-          poly.setAttribute('fill', sel ? '#fff' : color)
-          mk.appendChild(poly)
-          defs.appendChild(mk)
-        }
-      }
-      svg.appendChild(defs)
-    }
-
     const arrows=this._board?.arrows||[]; if(!arrows.length) return
 
     // Pre-defined colors for the render loop
@@ -1128,24 +1101,24 @@ const Canvas = {
 
   async _handleImageSource(source, screenPos) {
     const {wx, wy} = this._sw(screenPos.x, screenPos.y), id = crypto.randomUUID()
-    let rel = `references/${id}`
+    let dest = `${this._dir}/references/${id}`
     try {
       if (source instanceof File && source.path) {
-        rel += `-${source.name}`; await api.fs.copy(source.path, `${this._dir}/${rel}`)
+        dest += `-${source.name}`; await api.fs.copy(source.path, dest)
       } else {
         let blob = source
         if (typeof source === 'string') { const r = await fetch(source); blob = await r.blob() }
         const ext = blob.type.split('/')[1] || 'png'
-        rel += `-${typeof source === 'string' ? 'web' : 'pasted'}-image.${ext}`
+        dest += `-${typeof source === 'string' ? 'web' : 'pasted'}-image.${ext}`
         const reader = new FileReader()
         reader.onload = async () => {
-          await api.fs.writeBin(`${this._dir}/${rel}`, reader.result.split(',')[1])
-          const n = { id, type: 'image', x: Math.round(wx), y: Math.round(wy), width: 240, src: rel }
+          await api.fs.writeBin(dest, reader.result.split(',')[1])
+          const n = { id, type: 'image', x: Math.round(wx), y: Math.round(wy), width: 240, src: dest }
           this._board.nodes.push(n); this._renderNode(n); this._snapshot(); this._persist()
         }
         reader.readAsDataURL(blob); return
       }
-      const n = { id, type: 'image', x: Math.round(wx), y: Math.round(wy), width: 240, src: rel }
+      const n = { id, type: 'image', x: Math.round(wx), y: Math.round(wy), width: 240, src: dest }
       this._board.nodes.push(n); this._renderNode(n); this._snapshot(); this._persist()
     } catch (e) { console.error('Image add err:', e) }
   },
@@ -1471,7 +1444,7 @@ const Canvas = {
     const el=document.createElement('div');el.id=`pin-${n.id}`;el.className='pin pin-img'
     el.style.cssText=`left:${n.x}px;top:${n.y}px;width:${n.width||240}px;height:${n.height?n.height+'px':'auto'};position:absolute;z-index:2;display:flex;flex-direction:column;`
     
-    // Floating delete corner (like text pins)
+    // Floating delete corner instead of title bar
     const del = document.createElement('button'); del.className='pin-text-del-corner'
     del.textContent='×'; del.addEventListener('mousedown', e=>e.stopPropagation())
     del.onclick=()=>{ this._removeNode(n.id); this._snapshot(); this._persist() }

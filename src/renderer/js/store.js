@@ -12,6 +12,7 @@ const Store = {
   get(k) { return k ? this._data[k] : this._data },
 
   set(k, v) {
+    if (this._data[k] === v) return
     this._data[k] = v
     if (k !== 'git') this._notify(k)
     this.save()
@@ -19,6 +20,7 @@ const Store = {
 
   patch(k, v) {
     if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+      // Note: Deep equality check could go here, but for Git state simple patch is fine
       this._data[k] = { 
         ...(typeof this._data[k] === 'object' ? this._data[k] : {}), 
         ...v 

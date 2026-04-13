@@ -436,15 +436,21 @@ const App = {
       this.openBoard(b.file)
     }
     boardsHdr.appendChild(boardsLbl); boardsHdr.appendChild(addBoardBtn); boardsSection.appendChild(boardsHdr)
+
+    // 1. Static Master Board Button (Never cleared)
     const masterBtn = document.createElement('button')
     masterBtn.className = 'sidebar-row master-board-row' + (s.view==='board'&&s.boardFile==='master.json'?' board-active':'')
     const masterIcon = document.createElement('span'); masterIcon.textContent = '◎ '
     const masterName = document.createElement('span'); masterName.textContent = 'Master board'
     masterName.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
     masterBtn.appendChild(masterIcon); masterBtn.appendChild(masterName)
-
     masterBtn.onclick = () => this.openBoard('master.json', false)
-    boardsSection.appendChild(masterBtn); container.appendChild(boardsSection)
+    boardsSection.appendChild(masterBtn)
+
+    // 2. Container for dynamic sub-boards
+    const subBoardsList = document.createElement('div'); subBoardsList.id = 'sidebar-sub-boards'
+    boardsSection.appendChild(subBoardsList)
+    container.appendChild(boardsSection)
 
     const footer = document.createElement('div'); footer.className = 'sidebar-footer'
     const pathBtn = document.createElement('button'); pathBtn.className = 'sidebar-path'
@@ -458,14 +464,61 @@ const App = {
     }).catch(e => console.error("Error reading docs:", e))
 
     Project.readBoards(project.dir).then(boards => {
-      // Clear only non-master board rows to prevent duplicates while keeping the Master entry
-      boardsSection.querySelectorAll('.sidebar-row:not(.master-board-row)').forEach(el => el.remove())
+      // Clear only the sub-boards container
+      subBoardsList.innerHTML = ''
 
       boards.filter(b=>!b.isMaster).forEach(b => {
         const btn = document.createElement('button')
         btn.className = 'sidebar-row'+(s.view==='board'&&s.boardFile===b.file?' board-active':'')
-        btn.innerHTML = `⊞ <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${b.name}</span><span class="board-count">${(b.nodes||[]).length}</span>`
-        btn.onclick = () => this.openBoard(b.file, false)
+        
+        const icon = document.createElement('span'); icon.textContent = '⊞ '; btn.appendChild(icon)
+        const lbl = document.createElement('span'); lbl.textContent = b.name; lbl.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'; btn.appendChild(lbl)
+        const cnt = document.createElement('span'); cnt.className = 'board-count'; cnt.textContent = (b.nodes||[]).length; btn.appendChild(cnt)
+
+        btn.onclick = () => {
+          if (Store.get('boardFile') === b.file && Store.get('view') === 'board') return
+          Store.set('view', 'board')
+          this.openBoard(b.file, false)
+        }
+
+        const _startBoardRename = (ev) => {
+          if (ev) { ev.stopPropagation(); ev.preventDefault() }
+          const inp = document.createElement('input')
+          inp.value = b.name
+          inp.className = 'sidebar-new-input'
+          inp.style.margin = '0'
+          lbl.replaceWith(inp)
+          inp.focus(); inp.select()
+
+          const commit = async () => {
+            const newName = inp.value.trim()
+            if (newName && newName !== b.name) {
+              try {
+                b.name = newName
+                await Project.saveBoard(project.dir, b.file, b)
+                this.render() // Refresh to update list and counts
+                return
+              } catch (err) { console.error('Board rename failed:', err) }
+            }
+            if (inp.parentNode) inp.replaceWith(lbl)
+          }
+
+          inp.onblur = commit
+          inp.onkeydown = (e) => { if(e.key==='Enter') inp.blur(); if(e.key==='Escape') inp.replaceWith(lbl) }
+          inp.onmousedown = (e) => e.stopPropagation()
+        }
+
+        // Double-click label to rename
+        lbl.addEventListener('dblclick', (e) => { e.stopPropagation(); _startBoardRename(e) })
+
+        btn.addEventListener('contextmenu', e => {
+          e.preventDefault(); e.stopPropagation()
+          this._showSidebarMenu(e.clientX, e.clientY, [
+            { label: 'Rename Board', action: () => _startBoardRename(e) },
+            { label: 'Delete Board', danger: true, action: () => this._deleteBoard(project.dir, b.file) }
+          ])
+        })
+
         // Make draggable onto master board canvas
         btn.draggable = true
         btn.addEventListener('dragstart', e => {
@@ -474,7 +527,7 @@ const App = {
           e.dataTransfer.effectAllowed = 'link'
         })
         btn.title = 'Click to open · Drag onto canvas to pin'
-        boardsSection.appendChild(btn)
+        subBoardsList.appendChild(btn)
       })
     })
   },
@@ -487,49 +540,63 @@ const App = {
       btn.className = 'sidebar-row' + (isCurrentDoc && Store.get('view') === 'editor' ? ' active' : '')
       btn.title = node.name
 
-      // Editable label
+      // Document Label
       const lbl = document.createElement('span')
       lbl.textContent = `📄 ${node.name}`
       lbl.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
       btn.appendChild(lbl)
 
+      // Navigation
       btn.onclick = () => {
-        Store._data.docPath = node.path; Store.save()
-        if (Store.get('view')==='editor') {
-          Editor.loadDoc(node.path)
-          document.querySelectorAll('.sidebar-row.active').forEach(el=>el.classList.remove('active'))
-          btn.classList.add('active')
-        } else { Store.set('view','editor') }
+        if (Store.get('docPath') === node.path && Store.get('view') === 'editor') return
+        Store.set('docPath', node.path)
+        Store.set('view', 'editor')
       }
 
-      // Double-click to rename
-      lbl.addEventListener('dblclick', e => {
-        e.stopPropagation()
+      // Document Renaming
+      const _startRename = (ev) => {
+        if (ev) { ev.stopPropagation(); ev.preventDefault() }
         const inp = document.createElement('input')
         inp.value = node.name
-        inp.style.cssText = 'flex:1;background:var(--bg2);border:1px solid var(--accent);border-radius:var(--r);color:var(--tx);font-size:12.5px;padding:1px 4px;outline:none;width:100%;'
+        inp.className = 'sidebar-new-input'
+        inp.style.margin = '0'
         lbl.replaceWith(inp)
         inp.focus(); inp.select()
+
         const commit = async () => {
           const newName = inp.value.trim()
           if (newName && newName !== node.name) {
-            const newPath = node.path.replace(/[^/]+\.md$/, `${newName}.md`)
-            await api.fs.rename(node.path, newPath)
-            if (Store.get('docPath') === node.path) { Store._data.docPath = newPath; Store.save() }
-            node.path = newPath; node.name = newName
+            const lastSlash = node.path.lastIndexOf('/')
+            const dir = node.path.substring(0, lastSlash + 1)
+            const newPath = `${dir}${newName}.md`
+            try {
+              await api.fs.rename(node.path, newPath)
+              const wasActive = Store.get('docPath') === node.path
+              node.path = newPath; node.name = newName // Update local reference
+              if (wasActive) {
+                Store.set('docPath', newPath) // Triggers render
+              } else {
+                this.render() // Force sidebar refresh from disk
+              }
+              return
+            } catch (err) { console.error('Rename failed:', err) }
           }
-          inp.replaceWith(lbl)
-          lbl.textContent = `📄 ${node.name}`
+          if (inp.parentNode) { inp.replaceWith(lbl); lbl.textContent = `📄 ${node.name}` }
         }
-        inp.addEventListener('blur', commit)
-        inp.addEventListener('keydown', e => { if (e.key==='Enter') { e.preventDefault(); inp.blur() } if (e.key==='Escape') { inp.replaceWith(lbl) } })
-        inp.addEventListener('mousedown', e => e.stopPropagation())
-      })
+
+        inp.onblur = commit
+        inp.onkeydown = (e) => { if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') inp.replaceWith(lbl) }
+        inp.onmousedown = (e) => e.stopPropagation()
+      }
+
+      // Double-click label to rename
+      lbl.addEventListener('dblclick', (e) => { e.stopPropagation(); _startRename(e) })
 
       // Context menu for files
       btn.addEventListener('contextmenu', e => {
         e.preventDefault(); e.stopPropagation()
         this._showSidebarMenu(e.clientX, e.clientY, [
+          { label: 'Rename', action: () => _startRename(e) },
           { label: 'Delete Document', danger: true, action: () => this._deleteDoc(node.path) }
         ])
       })
@@ -559,13 +626,21 @@ const App = {
       const b = document.createElement('button')
       b.className = 'ctx-item' + (item.danger ? ' ctx-danger' : '')
       b.innerHTML = `<span>${item.label}</span>`
-      b.onclick = () => { menu.classList.add('hidden'); item.action() }
+      b.onclick = (e) => { 
+        e.stopPropagation()
+        menu.classList.add('hidden')
+        item.action() 
+      }
       menu.appendChild(b)
     })
     menu.style.left = x + 'px'; menu.style.top = y + 'px'
     menu.classList.remove('hidden')
     
-    const close = () => { menu.classList.add('hidden'); document.removeEventListener('mousedown', close) }
+    const close = (e) => {
+      if (menu.contains(e.target)) return
+      menu.classList.add('hidden')
+      document.removeEventListener('mousedown', close)
+    }
     setTimeout(() => document.addEventListener('mousedown', close), 10)
   },
 
@@ -605,8 +680,12 @@ const App = {
   },
 
   openBoard(file, push=true) {
-    if (push) { Store._data.boardStack = [...Store.get('boardStack'), Store.get('boardFile')] }
-    Store._data.boardFile = file; Store.save(); Store.set('view','board')
+    if (push) { 
+      const stack = Store.get('boardStack')
+      Store.set('boardStack', [...stack, Store.get('boardFile')]) 
+    }
+    Store.set('boardFile', file)
+    Store.set('view', 'board')
   }
 }
 
