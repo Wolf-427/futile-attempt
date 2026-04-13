@@ -15,6 +15,20 @@
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 html,body,#app{height:100%;overflow:hidden;background:var(--bg);color:var(--tx);font-family:var(--sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;}
+
+/* ── Loading screen ─────────────────────────────────────────────────────────── */
+#ls {
+  position:fixed;inset:0;z-index:99999;
+  background:#0f0f0d;
+  display:flex;align-items:center;justify-content:center;
+  -webkit-app-region:drag;
+  transition:opacity 0.45s ease;
+}
+#ls.ls-out { opacity:0; pointer-events:none; }
+.ls-inner { display:flex;flex-direction:column;align-items:center;gap:14px;animation:ls-rise 0.55s ease both; }
+@keyframes ls-rise { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+.ls-mark { width:54px;height:54px;background:var(--accent);border-radius:12px;display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-size:30px;font-weight:500;color:#0f0f0d; }
+.ls-wordmark { font-family:var(--serif);font-size:19px;font-weight:400;color:var(--tx);letter-spacing:0.03em; }
 ::-webkit-scrollbar{width:5px;} ::-webkit-scrollbar-track{background:transparent;} ::-webkit-scrollbar-thumb{background:var(--b1);border-radius:3px;}
 ::selection{background:rgba(201,169,110,0.2);}
 button{font-family:var(--sans);cursor:pointer;}
@@ -378,6 +392,10 @@ input[type=range].editor-font-size::-webkit-slider-thumb { -webkit-appearance: n
 
 .pin-note-text { display:block; width:100%; flex:1; padding:4px 10px 10px; background:transparent; border:none; color:inherit; font-family:var(--sans); font-size:13px; line-height:1.6; resize:none; outline:none; min-height:0; height:calc(100% - 32px); }
 .pin-note-text::placeholder { opacity:.4; font-style:italic; }
+.pin-note-content { display:block; width:100%; flex:1; padding:4px 10px 10px; background:transparent; color:inherit; font-family:var(--sans); font-size:13px; line-height:1.6; outline:none; overflow-y:auto; cursor:text; word-break:break-word; box-sizing:border-box; }
+.pin-note-content:empty::before { content:"Type a note…"; opacity:.4; font-style:italic; pointer-events:none; display:block; }
+.pin-note-content ul { margin:4px 0 4px 18px; padding:0; }
+.pin-note-content li { margin:1px 0; }
 
 /* Note must flex-column to let textarea fill */
 .pin-note { display:flex; flex-direction:column; }

@@ -10,6 +10,12 @@
   <link rel="stylesheet" href="css/app.css"/>
 </head>
 <body>
+  <div id="ls">
+    <div class="ls-inner">
+      <div class="ls-mark">S</div>
+      <div class="ls-wordmark">Scriptum</div>
+    </div>
+  </div>
   <div id="app" style="height:100%;background:#0f0f0d;"></div>
   <script src="js/store.js"></script>
   <script src="js/project.js"></script>
@@ -18,8 +24,14 @@
   <script src="js/settings.js"></script>
   <script src="js/app.js"></script>
   <script>
-    // Store is already loaded sync. Now verify project exists async, then render.
-    Store.verifyProject().then(() => App.init())
+    // Always start at project overview — clear activeId first so verifyProject
+    // short-circuits (skips the slow IPC fs.exists call) and resolves immediately.
+    Store._data.activeId = null
+    Store.verifyProject().then(() => {
+      App.init()
+      const ls = document.getElementById('ls')
+      if (ls) { ls.classList.add('ls-out'); setTimeout(() => ls.remove(), 500) }
+    })
   </script>
 </body>
 </html>

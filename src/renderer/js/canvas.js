@@ -14,7 +14,8 @@ const Canvas = {
   _resize:     null,
   _marquee:    null,
   _selected:   new Set(),
-  _connecting: null,
+  _arrowDrag:     null,
+  _selectedArrow: null,
   _panning:    false,
   _lastMouse:  { x: 0, y: 0 },
   _history:    [],
@@ -60,10 +61,17 @@ const Canvas = {
     ctx.id = 'canvas-ctx'; ctx.className = 'ctx-menu hidden'
     document.body.appendChild(ctx)
 
+    document.getElementById('cv-arrow-bar')?.remove()
+    const arrowBar = document.createElement('div')
+    arrowBar.id = 'cv-arrow-bar'
+    arrowBar.style.cssText = 'position:fixed;z-index:9999;display:none;align-items:center;gap:3px;background:var(--bg2);border:1px solid var(--b2);border-radius:var(--r3);padding:5px 8px;box-shadow:0 4px 20px rgba(0,0,0,.6);'
+    document.body.appendChild(arrowBar)
+    this._arrowBar = arrowBar
+
     this._dir = dir; this._file = file
     this._zoom = 1; this._pan = { x: 80, y: 80 }
     this._mode = 'select'; this._drag = null; this._resize = null; this._marquee = null
-    this._selected = new Set(); this._connecting = null; this._panning = false
+    this._selected = new Set(); this._arrowDrag = null; this._selectedArrow = null; this._panning = false
     this._history = []; this._histIdx = -1; this._previewGroup = null; this._textDraw = null
 
     container.innerHTML = `
@@ -101,10 +109,8 @@ const Canvas = {
     nm.style.cssText = 'font-family:var(--serif);font-size:14px;color:var(--tx2);'
     nm.textContent = this._board?.name || 'Board'; tb.appendChild(nm); this._sep(tb)
 
-    for (const [id,label,title] of [['select','↖ Select','Select  V'],['connect','⤳ Connect','Connect  C']]) {
-      const b = document.createElement('button'); b.className='canvas-tool canvas-mode-btn'; b.id=`cvmode-${id}`
-      b.textContent=label; b.title=title; b.onclick=()=>this._setMode(id); tb.appendChild(b)
-    }
+    const selBtn = document.createElement('button'); selBtn.className='canvas-tool canvas-mode-btn'; selBtn.id='cvmode-select'
+    selBtn.textContent='↖ Select'; selBtn.title='Select  V'; selBtn.onclick=()=>this._setMode('select'); tb.appendChild(selBtn)
     this._sep(tb)
 
     for (const [c,bg,bd] of [['yellow','var(--ny-bg)','var(--ny-b)'],['blue','var(--nb-bg)','var(--nb-b)'],['green','var(--ng-bg)','var(--ng-b)'],['purple','var(--np-bg)','var(--np-b)']]) {
@@ -138,7 +144,6 @@ const Canvas = {
 
   _setMode(m) {
     this._mode = m
-    if (this._connecting) { document.querySelectorAll('.anchor-active').forEach(a=>{a.classList.remove('anchor-active');a.style.opacity='0'}); this._connecting=null }
     this._refreshModeUI()
     if (m === 'text') {
       this._area.style.cursor = 'text'
@@ -149,8 +154,7 @@ const Canvas = {
     }
     document.getElementById('cv-hint').textContent = m==='select'
       ? 'Scroll to pan · Pinch to zoom · Drag canvas to marquee-select · Shift+click for multi · Right-click for menu · ⌘G to group'
-      : m === 'text' ? 'Click to place a text field · Click and drag to draw its size'
-      : 'Hover a pin → click an anchor → click another anchor · Esc to cancel'
+      : 'Click to place a text field · Click and drag to draw its size'
   },
 
   _refreshModeUI() {
@@ -201,8 +205,6 @@ const Canvas = {
       if (this._mode === 'text') return
       // For all other modes, only react to clicks on bare canvas background
       if (e.target!==this._area&&e.target!==this._world) return
-      // Cancel connect
-      if (this._mode==='connect'&&this._connecting) { document.querySelectorAll('.anchor-active').forEach(a=>{a.classList.remove('anchor-active');a.style.opacity='0'}); this._connecting=null; return }
 
       // Start marquee
       this._clearSelection()
@@ -214,6 +216,26 @@ const Canvas = {
 
     window.addEventListener('mousemove', e => {
       if (this._panning) { this._pan.x+=e.clientX-this._lastMouse.x; this._pan.y+=e.clientY-this._lastMouse.y; this._lastMouse={x:e.clientX,y:e.clientY}; this._applyTransform(); return }
+
+      if (this._arrowDrag) {
+        const r=this._area.getBoundingClientRect()
+        const sx=e.clientX-r.left, sy=e.clientY-r.top
+        const fn=this._board.nodes.find(n=>n.id===this._arrowDrag.fromId)
+        if (fn) {
+          const fp=this._anchorPos(fn, this._arrowDrag.fromSide)
+          const {x:ax,y:ay}=this._toScreen(fp.x,fp.y)
+          let prev=document.getElementById('cv-arrow-preview')
+          if (!prev) {
+            prev=document.createElementNS('http://www.w3.org/2000/svg','path'); prev.id='cv-arrow-preview'
+            prev.setAttribute('stroke','rgba(201,169,110,0.7)'); prev.setAttribute('stroke-width','1.5')
+            prev.setAttribute('stroke-dasharray','5,4'); prev.setAttribute('fill','none')
+            this._svg.appendChild(prev)
+          }
+          const d=`M${ax},${ay} C${ax+(sx-ax)*.5},${ay} ${ax+(sx-ax)*.5},${sy} ${sx},${sy}`
+          prev.setAttribute('d',d)
+        }
+        return
+      }
 
       if (this._drag) {
         const r=this._area.getBoundingClientRect()
@@ -300,7 +322,7 @@ const Canvas = {
       if (this._resize) {
         const dx=e.clientX-this._resize.startX, dy=e.clientY-this._resize.startY
         const node=this._board.nodes.find(n=>n.id===this._resize.id)
-        if (node) { node.width=Math.max(120,Math.round(this._resize.startW+dx/this._zoom)); node.height=Math.max(80,Math.round(this._resize.startH+dy/this._zoom)); const el=document.getElementById(`pin-${node.id}`); if(el){el.style.width=node.width+'px';el.style.height=node.height+'px'} }
+        if (node) { node.width=Math.max(120,Math.round(this._resize.startW+dx/this._zoom)); node.height=Math.max(80,Math.round(this._resize.startH+dy/this._zoom)); const el=document.getElementById(`pin-${node.id}`); if(el){el.style.width=node.width+'px'; if(node.type==='text'){el.style.minHeight=node.height+'px';el.style.height=''}else{el.style.height=node.height+'px'}} }
         return
       }
 
@@ -336,6 +358,30 @@ const Canvas = {
       this._board?.nodes?.filter(g => g.type === 'group').forEach(g => this._restoreGroupDOM(g))
 
       if (this._panning) { this._panning = false; return }
+
+      // ── Finalize arrow drag ─────────────────────────────────────────────────
+      if (this._arrowDrag) {
+        document.getElementById('cv-arrow-preview')?.remove()
+        const targetEl = document.elementFromPoint(_e.clientX, _e.clientY)
+        const targetAnchorEl = targetEl?.closest('.pin-anchor')
+        const targetPinEl = targetEl?.closest('[id^="pin-"]')
+        let toId = null
+        if (targetAnchorEl) {
+          toId = targetAnchorEl.closest('[id^="pin-"]')?.id.replace('pin-','')
+        } else if (targetPinEl) {
+          toId = targetPinEl.id.replace('pin-','')
+        }
+        if (toId && toId!==this._arrowDrag.fromId) {
+          if (!this._board.arrows) this._board.arrows=[]
+          if (!this._board.arrows.some(ar=>ar.from===this._arrowDrag.fromId&&ar.to===toId)) {
+            this._board.arrows.push({id:crypto.randomUUID(),from:this._arrowDrag.fromId,to:toId})
+            this._snapshot(); this._persist(); this._renderArrows()
+          }
+        }
+        document.querySelectorAll('.pin-anchor').forEach(a=>{a.style.opacity='0'})
+        this._arrowDrag = null
+        return
+      }
 
       // ── Finalize text draw ──────────────────────────────────────────────────
       if (this._textDraw) {
@@ -440,14 +486,22 @@ const Canvas = {
       if (tag==='TEXTAREA'||tag==='INPUT'||document.activeElement?.contentEditable==='true') return
       const mod=e.metaKey||e.ctrlKey
       if (!mod&&e.key==='v') this._setMode('select')
-      if (!mod&&e.key==='c') this._setMode('connect')
       if (!mod&&e.key==='t') this._setMode('text')
       if (e.key==='Escape'){this._setMode('select');this._clearSelection()}
       if (mod&&e.key.toLowerCase()==='g'){e.preventDefault();this._groupSelected()}
       if (mod&&e.key.toLowerCase()==='d'&&this._selected.size===1){e.preventDefault();const n=this._board.nodes.find(n=>n.id===[...this._selected][0]);if(n)this._duplicateNode(n)}
       if (mod&&e.key==='z'&&!e.shiftKey){e.preventDefault();this._undo()}
       if (mod&&(e.key==='z'&&e.shiftKey||e.key==='y')){e.preventDefault();this._redo()}
-      if ((e.key==='Delete'||e.key==='Backspace')&&this._selected.size>0){e.preventDefault();this._selected.forEach(id=>this._removeNode(id));this._selected.clear();this._snapshot();this._persist();this._renderArrows()}
+      if (e.key==='Delete'||e.key==='Backspace') {
+        if (this._selectedArrow) {
+          e.preventDefault()
+          this._board.arrows=this._board.arrows.filter(x=>x.id!==this._selectedArrow)
+          this._selectedArrow=null; this._persist(); this._renderArrows()
+        } else if (this._selected.size>0) {
+          e.preventDefault()
+          this._selected.forEach(id=>this._removeNode(id)); this._selected.clear(); this._snapshot(); this._persist(); this._renderArrows()
+        }
+      }
     })
   },
 
@@ -455,7 +509,7 @@ const Canvas = {
 
   _startNodeDrag(e, node) {
     if (e.button!==0) return; e.stopPropagation()
-    if (this._mode==='connect') return
+    if (this._arrowDrag) return
     const r=this._area.getBoundingClientRect()
     const wx=(e.clientX-r.left-this._pan.x)/this._zoom, wy=(e.clientY-r.top-this._pan.y)/this._zoom
     if (!e.shiftKey&&!this._selected.has(node.id)) this._clearSelection()
@@ -507,7 +561,7 @@ const Canvas = {
       el.classList.remove('pin-selected')
     }
   },
-  _clearSelection() { [...this._selected].forEach(id=>this._deselectNode(id)); this._selected.clear() },
+  _clearSelection() { [...this._selected].forEach(id=>this._deselectNode(id)); this._selected.clear(); this._selectedArrow=null; this._arrowBarPos=null; this._renderArrows() },
 
   // ── GROUPING ──────────────────────────────────────────────────────────────
 
@@ -717,25 +771,23 @@ const Canvas = {
   // ── Anchors ───────────────────────────────────────────────────────────────
 
   _addAnchors(el, node) {
-    for (const [cls,css] of [['anchor-top','top:-6px;left:50%;transform:translateX(-50%);'],['anchor-right','top:50%;right:-6px;transform:translateY(-50%);'],['anchor-bottom','bottom:-6px;left:50%;transform:translateX(-50%);'],['anchor-left','top:50%;left:-6px;transform:translateY(-50%);']]) {
+    for (const [cls,css,side] of [
+      ['anchor-top',   'top:-6px;left:50%;transform:translateX(-50%);',  'top'],
+      ['anchor-right', 'top:50%;right:-6px;transform:translateY(-50%);', 'right'],
+      ['anchor-bottom','bottom:-6px;left:50%;transform:translateX(-50%);','bottom'],
+      ['anchor-left',  'top:50%;left:-6px;transform:translateY(-50%);',  'left'],
+    ]) {
       const a=document.createElement('div'); a.className=`pin-anchor ${cls}`
+      a.dataset.side=side
       a.style.cssText=`position:absolute;${css}width:12px;height:12px;border-radius:50%;background:var(--accent);border:2px solid var(--bg2);opacity:0;cursor:crosshair;z-index:20;pointer-events:all;transition:opacity .1s;`
       a.addEventListener('mousedown', e=>{
-        e.stopPropagation();e.preventDefault()
-        if (this._mode!=='connect') this._setMode('connect')
-        if (!this._connecting) { this._connecting=node.id;a.classList.add('anchor-active');a.style.opacity='1' }
-        else if (this._connecting!==node.id) {
-          if (!this._board.arrows) this._board.arrows=[]
-          if (!this._board.arrows.some(ar=>ar.from===this._connecting&&ar.to===node.id))
-            this._board.arrows.push({id:crypto.randomUUID(),from:this._connecting,to:node.id})
-          document.querySelectorAll('.anchor-active').forEach(aa=>{aa.classList.remove('anchor-active');aa.style.opacity='0'})
-          this._connecting=null;this._snapshot();this._persist();this._renderArrows()
-        }
+        e.stopPropagation(); e.preventDefault()
+        this._arrowDrag = { fromId: node.id, fromSide: side }
       })
       el.appendChild(a)
     }
-    el.addEventListener('mouseenter',()=>el.querySelectorAll('.pin-anchor').forEach(a=>{a.style.opacity='1'}))
-    el.addEventListener('mouseleave',()=>el.querySelectorAll('.pin-anchor:not(.anchor-active)').forEach(a=>{a.style.opacity='0'}))
+    el.addEventListener('mouseenter',()=>{ if(!this._arrowDrag) el.querySelectorAll('.pin-anchor').forEach(a=>{a.style.opacity='1'}) })
+    el.addEventListener('mouseleave',()=>{ if(!this._arrowDrag) el.querySelectorAll('.pin-anchor').forEach(a=>{a.style.opacity='0'}) })
   },
 
   // ── Transform ─────────────────────────────────────────────────────────────
@@ -751,35 +803,178 @@ const Canvas = {
 
   _toScreen(wx,wy) { return {x:wx*this._zoom+this._pan.x, y:wy*this._zoom+this._pan.y} },
 
+  _anchorPos(node, side) {
+    const w=node.width||220, h=node.height||160
+    if (side==='top')    return {x:node.x+w/2, y:node.y}
+    if (side==='right')  return {x:node.x+w,   y:node.y+h/2}
+    if (side==='bottom') return {x:node.x+w/2, y:node.y+h}
+    if (side==='left')   return {x:node.x,     y:node.y+h/2}
+    return {x:node.x+w/2, y:node.y+h/2}
+  },
+
+  _bestAnchorPair(fn, tn) {
+    const fCx=fn.x+(fn.width||220)/2,  fCy=fn.y+(fn.height||160)/2
+    const tCx=tn.x+(tn.width||220)/2,  tCy=tn.y+(tn.height||160)/2
+    const dx=tCx-fCx, dy=tCy-fCy
+    if (Math.abs(dx) >= Math.abs(dy)) return dx>=0 ? ['right','left'] : ['left','right']
+    return dy>=0 ? ['bottom','top'] : ['top','bottom']
+  },
+
   _renderArrows() {
     const svg=this._svg; if(!svg) return
     svg.innerHTML=''
     const arrows=this._board?.arrows||[]; if(!arrows.length) return
+
+    const COLORS = {
+      default: {stroke:'rgba(201,169,110,0.8)', head:'rgba(201,169,110,0.95)'},
+      red:     {stroke:'rgba(220,80,80,0.8)',   head:'rgba(220,80,80,0.95)'},
+      blue:    {stroke:'rgba(80,140,255,0.8)',  head:'rgba(80,140,255,0.95)'},
+      green:   {stroke:'rgba(80,195,120,0.8)',  head:'rgba(80,195,120,0.95)'},
+    }
+
     const defs=document.createElementNS('http://www.w3.org/2000/svg','defs')
-    const mk=document.createElementNS('http://www.w3.org/2000/svg','marker')
-    mk.setAttribute('id','cvmk');mk.setAttribute('markerWidth','8');mk.setAttribute('markerHeight','6');mk.setAttribute('refX','7');mk.setAttribute('refY','3');mk.setAttribute('orient','auto')
-    const pl=document.createElementNS('http://www.w3.org/2000/svg','polygon')
-    pl.setAttribute('points','0 0,8 3,0 6');pl.setAttribute('fill','rgba(201,169,110,0.9)')
-    mk.appendChild(pl);defs.appendChild(mk);svg.appendChild(defs)
+    for (const [key,c] of Object.entries(COLORS)) {
+      for (const sel of [false,true]) {
+        const mk=document.createElementNS('http://www.w3.org/2000/svg','marker')
+        mk.setAttribute('id',`cvmk-${key}${sel?'-sel':''}`)
+        mk.setAttribute('markerWidth','8');mk.setAttribute('markerHeight','6')
+        mk.setAttribute('refX','7');mk.setAttribute('refY','3');mk.setAttribute('orient','auto')
+        const pl=document.createElementNS('http://www.w3.org/2000/svg','polygon')
+        pl.setAttribute('points','0 0,8 3,0 6');pl.setAttribute('fill', sel?'#fff':c.head)
+        mk.appendChild(pl);defs.appendChild(mk)
+      }
+    }
+    svg.appendChild(defs)
+
+    let barArrow=null, barMx=0, barMy=0
     for (const a of arrows) {
       const fn=this._board.nodes.find(n=>n.id===a.from), tn=this._board.nodes.find(n=>n.id===a.to)
       if(!fn||!tn) continue
-      const {x:x1,y:y1}=this._toScreen(fn.x+(fn.width||220)/2, fn.y+(fn.height||160)/2)
-      const {x:x2,y:y2}=this._toScreen(tn.x+(tn.width||220)/2, tn.y+(tn.height||160)/2)
-      const d=`M${x1},${y1} C${x1+(x2-x1)*.5},${y1} ${x1+(x2-x1)*.5},${y2} ${x2},${y2}`
+      const [fromSide,toSide]=this._bestAnchorPair(fn,tn)
+      const fp=this._anchorPos(fn,fromSide), tp=this._anchorPos(tn,toSide)
+      const {x:x1,y:y1}=this._toScreen(fp.x,fp.y)
+      const {x:x2,y:y2}=this._toScreen(tp.x,tp.y)
+
+      // Control points follow the anchor direction so the head always faces the right way
+      let d
+      if (fromSide==='right'||fromSide==='left') {
+        const mx=(x2-x1)*.5
+        d=`M${x1},${y1} C${x1+mx},${y1} ${x2-mx},${y2} ${x2},${y2}`
+      } else {
+        const my=(y2-y1)*.5
+        d=`M${x1},${y1} C${x1},${y1+my} ${x2},${y2-my} ${x2},${y2}`
+      }
+
+      const sel = this._selectedArrow===a.id
+      const ck  = COLORS[a.color]?a.color:'default'
+      const c   = COLORS[ck]
+
+      if (sel) {
+        const glow=document.createElementNS('http://www.w3.org/2000/svg','path')
+        glow.setAttribute('d',d);glow.setAttribute('stroke','rgba(255,255,255,0.35)')
+        glow.setAttribute('stroke-width','5');glow.setAttribute('fill','none')
+        svg.appendChild(glow)
+      }
+
       const path=document.createElementNS('http://www.w3.org/2000/svg','path')
-      path.setAttribute('d',d);path.setAttribute('stroke','rgba(201,169,110,0.75)');path.setAttribute('stroke-width','1.5');path.setAttribute('fill','none');path.setAttribute('marker-end','url(#cvmk)')
+      path.setAttribute('d',d)
+      path.setAttribute('stroke', sel?'#fff':c.stroke)
+      path.setAttribute('stroke-width', sel?'2':'1.5')
+      path.setAttribute('fill','none')
+      path.setAttribute('marker-end',`url(#cvmk-${ck}${sel?'-sel':''})`)
+      if (a.dashed) path.setAttribute('stroke-dasharray','6,4')
+      svg.appendChild(path)
+
       const hit=document.createElementNS('http://www.w3.org/2000/svg','path')
-      hit.setAttribute('d',d);hit.setAttribute('stroke','transparent');hit.setAttribute('stroke-width','14');hit.setAttribute('fill','none')
+      hit.setAttribute('d',d);hit.setAttribute('stroke','transparent')
+      hit.setAttribute('stroke-width','14');hit.setAttribute('fill','none')
       hit.style.pointerEvents='stroke';hit.style.cursor='pointer'
       const aid=a.id
-      hit.addEventListener('dblclick',e=>{e.stopPropagation();this._board.arrows=this._board.arrows.filter(x=>x.id!==aid);this._persist();this._renderArrows()})
-      hit.addEventListener('contextmenu',e=>{e.preventDefault();e.stopPropagation();this._showMenu(e.clientX,e.clientY,[{label:'Delete arrow',danger:true,action:()=>{this._board.arrows=this._board.arrows.filter(x=>x.id!==aid);this._persist();this._renderArrows()}}])})
-      svg.appendChild(path);svg.appendChild(hit)
+
+      hit.addEventListener('click', e=>{
+        e.stopPropagation()
+        this._selectedArrow = sel ? null : aid
+        this._arrowBarPos = { x: e.clientX, y: e.clientY }
+        this._renderArrows()
+      })
+      hit.addEventListener('dblclick', e=>{
+        e.stopPropagation()
+        this._board.arrows=this._board.arrows.filter(x=>x.id!==aid)
+        this._selectedArrow=null; this._persist(); this._renderArrows()
+      })
+      svg.appendChild(hit)
+
+      if (sel) { barArrow = a; barMx = this._arrowBarPos?.x ?? (x1+x2)/2; barMy = this._arrowBarPos?.y ?? (y1+y2)/2 }
     }
+    if (barArrow) this._showArrowBar(barArrow, barMx, barMy)
+    else this._hideArrowBar()
   },
 
   // ── Minimap ───────────────────────────────────────────────────────────────
+
+  _hideArrowBar() {
+    if (this._arrowBar) this._arrowBar.style.display = 'none'
+  },
+
+  _showArrowBar(arrow, mx, my) {
+    const bar = this._arrowBar; if (!bar) return
+    bar.innerHTML = ''
+
+    const STROKE_COLORS = {
+      default: 'rgba(201,169,110,0.95)',
+      red:     'rgba(220,80,80,0.95)',
+      blue:    'rgba(80,140,255,0.95)',
+      green:   'rgba(80,195,120,0.95)',
+    }
+    const cur = arrow.color || 'default'
+
+    // Color swatches
+    for (const [key, clr] of Object.entries(STROKE_COLORS)) {
+      const dot = document.createElement('button')
+      dot.title = key[0].toUpperCase() + key.slice(1)
+      dot.style.cssText = `width:13px;height:13px;border-radius:50%;background:${clr};border:2px solid ${cur===key?'#fff':'transparent'};cursor:pointer;padding:0;flex-shrink:0;outline:none;`
+      dot.addEventListener('mousedown', e => { e.stopPropagation(); arrow.color=key; this._persist(); this._renderArrows() })
+      bar.appendChild(dot)
+    }
+
+    // Separator
+    const sep = () => { const d=document.createElement('div'); d.style.cssText='width:1px;height:16px;background:rgba(255,255,255,0.12);margin:0 4px;flex-shrink:0;'; bar.appendChild(d) }
+    sep()
+
+    // Stroke style toggle (solid ↔ dashed) — SVG icon
+    const strokeBtn = document.createElement('button')
+    strokeBtn.title = arrow.dashed ? 'Switch to solid' : 'Switch to dashed'
+    strokeBtn.style.cssText = 'background:transparent;border:none;cursor:pointer;padding:2px 4px;display:flex;align-items:center;color:var(--tx2);border-radius:3px;'
+    strokeBtn.innerHTML = arrow.dashed
+      ? `<svg width="26" height="10" viewBox="0 0 26 10"><line x1="1" y1="5" x2="25" y2="5" stroke="currentColor" stroke-width="2" stroke-dasharray="5,3"/></svg>`
+      : `<svg width="26" height="10" viewBox="0 0 26 10"><line x1="1" y1="5" x2="25" y2="5" stroke="currentColor" stroke-width="2"/></svg>`
+    strokeBtn.addEventListener('mousedown', e => { e.stopPropagation(); arrow.dashed=!arrow.dashed; this._persist(); this._renderArrows() })
+    bar.appendChild(strokeBtn)
+
+    sep()
+
+    // Delete button
+    const del = document.createElement('button')
+    del.title = 'Delete  Del'
+    del.innerHTML = `<svg width="13" height="13" viewBox="0 0 13 13"><line x1="2" y1="2" x2="11" y2="11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><line x1="11" y1="2" x2="2" y2="11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`
+    del.style.cssText = 'background:transparent;border:none;cursor:pointer;padding:2px 4px;display:flex;align-items:center;border-radius:3px;color:var(--tx3);'
+    del.addEventListener('mouseenter', () => { del.style.color='var(--err)' })
+    del.addEventListener('mouseleave', () => { del.style.color='var(--tx3)' })
+    del.addEventListener('mousedown', e => {
+      e.stopPropagation()
+      this._board.arrows=this._board.arrows.filter(x=>x.id!==arrow.id)
+      this._selectedArrow=null; this._persist(); this._renderArrows()
+    })
+    bar.appendChild(del)
+
+    bar.style.display = 'flex'
+    const bw = bar.offsetWidth || 190
+    let x = mx - bw/2, y = my - 46
+    if (x < 8) x = 8
+    if (x + bw > window.innerWidth - 8) x = window.innerWidth - bw - 8
+    if (y < 8) y = my + 16
+    bar.style.left = x+'px'; bar.style.top = y+'px'
+  },
 
   _updateMinimap() {
     const mm=document.getElementById('cv-minimap'); if(!mm||!this._board) return
@@ -947,7 +1142,7 @@ const Canvas = {
   _makeText(n) {
     const el = document.createElement('div')
     el.id = `pin-${n.id}`; el.className = 'pin pin-text'
-    el.style.cssText = `left:${n.x}px;top:${n.y}px;width:${n.width||220}px;height:${n.height||60}px;position:absolute;z-index:2;display:flex;flex-direction:column;overflow:hidden;`
+    el.style.cssText = `left:${n.x}px;top:${n.y}px;width:${n.width||220}px;min-height:${n.height||60}px;position:absolute;z-index:2;display:flex;flex-direction:column;`
 
     const content = document.createElement('div')
     content.className = 'pin-text-content'
@@ -1054,13 +1249,6 @@ const Canvas = {
     })
     content.addEventListener('keydown', e => { e.stopPropagation(); if(e.key==='Escape') content.blur() })
 
-    content.addEventListener('input', () => {
-      // Only grow — never shrink — to drawn/resized height
-      if (content.scrollHeight + 16 > el.offsetHeight) {
-        n.height = content.scrollHeight + 16
-        el.style.height = n.height + 'px'
-      }
-    })
     content.addEventListener('mouseup', () => setTimeout(positionFmt, 10))
     content.addEventListener('keyup',  () => setTimeout(positionFmt, 10))
 
@@ -1077,7 +1265,6 @@ const Canvas = {
     el.appendChild(this._resizeHandle(n))
 
     // Clean up floating fmt bar when node is removed
-    const origRemove = this._removeNode.bind(this)
     el._cleanup = () => fmt.remove()
 
     return el
@@ -1086,14 +1273,94 @@ const Canvas = {
   _makeNote(n) {
     const el=document.createElement('div'); el.id=`pin-${n.id}`; el.className=`pin pin-note pin-note-${n.color}`
     el.style.cssText=`left:${n.x}px;top:${n.y}px;width:${n.width||220}px;height:${n.height||160}px;position:absolute;z-index:2;`
-    const bar=document.createElement('div');bar.className='pin-bar'
+    const hbar=document.createElement('div');hbar.className='pin-bar'
     const lbl=document.createElement('span');lbl.className='pin-label';lbl.textContent='Note'
-    bar.appendChild(lbl);bar.appendChild(this._xBtn(n));el.appendChild(bar)
-    const ta=document.createElement('textarea');ta.className='pin-note-text';ta.value=n.text||'';ta.placeholder='Type a note…'
-    ta.addEventListener('mousedown',e=>e.stopPropagation());ta.addEventListener('input',()=>{n.text=ta.value;this._persist()})
-    el.appendChild(ta);el.appendChild(this._resizeHandle(n));this._addAnchors(el,n)
+    hbar.appendChild(lbl);hbar.appendChild(this._xBtn(n));el.appendChild(hbar)
+
+    const content=document.createElement('div')
+    content.className='pin-note-content'
+    content.contentEditable='true'
+    // migrate plain text → html on first load
+    content.innerHTML = n.html || (n.text ? n.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\n/g,'<br>') : '')
+    content.style.cssText=`font-size:${n.fontSize||13}px;text-align:${n.align||'left'};`
+
+    // Floating format bar
+    const fmt = document.createElement('div')
+    fmt.className = 'text-fmt-bar'
+    fmt.style.display = 'none'
+    document.body.appendChild(fmt)
+
+    const fmtBtn = (label, cmd, arg) => {
+      const b = document.createElement('button'); b.className='text-fmt-btn'; b.innerHTML=label
+      b.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); document.execCommand(cmd, false, arg||null); content.focus(); updateFmt() })
+      fmt.appendChild(b); return b
+    }
+    const boldBtn   = fmtBtn('<strong>B</strong>', 'bold')
+    const italicBtn = fmtBtn('<em>I</em>', 'italic')
+    const ulBtn     = fmtBtn('•—', 'insertUnorderedList')
+
+    const sep1=document.createElement('div'); sep1.style.cssText='width:1px;height:14px;background:rgba(255,255,255,0.12);margin:0 3px;'; fmt.appendChild(sep1)
+
+    // Alignment buttons
+    const alignBtns = {}
+    const setAlign = (val) => {
+      n.align = val; content.style.textAlign = val
+      for (const a of ['left','center','right']) alignBtns[a].style.background = a===val ? 'rgba(255,255,255,0.15)' : ''
+      this._persist()
+    }
+    for (const [val, label, title] of [['left','←','Align left'],['center','↔','Align center'],['right','→','Align right']]) {
+      const b=document.createElement('button'); b.className='text-fmt-btn'; b.textContent=label; b.title=title
+      b.style.background=(n.align||'left')===val ? 'rgba(255,255,255,0.15)' : ''
+      b.addEventListener('mousedown', e=>{ e.preventDefault(); e.stopPropagation(); setAlign(val) })
+      fmt.appendChild(b); alignBtns[val]=b
+    }
+
+    const sep2=document.createElement('div'); sep2.style.cssText='width:1px;height:14px;background:rgba(255,255,255,0.12);margin:0 3px;'; fmt.appendChild(sep2)
+
+    const fmtSzLabel=document.createElement('span'); fmtSzLabel.style.cssText='font-size:10px;color:var(--tx3);font-family:var(--mono);padding:0 2px;min-width:26px;text-align:center;'; fmtSzLabel.textContent=(n.fontSize||13)+'px'
+    const fmtSmaller=document.createElement('button'); fmtSmaller.className='text-fmt-btn'; fmtSmaller.textContent='A−'
+    fmtSmaller.addEventListener('mousedown', e=>{ e.preventDefault(); e.stopPropagation(); n.fontSize=Math.max(8,(n.fontSize||13)-2); content.style.fontSize=n.fontSize+'px'; fmtSzLabel.textContent=n.fontSize+'px'; this._persist() })
+    const fmtBigger=document.createElement('button'); fmtBigger.className='text-fmt-btn'; fmtBigger.textContent='A+'
+    fmtBigger.addEventListener('mousedown', e=>{ e.preventDefault(); e.stopPropagation(); n.fontSize=Math.min(96,(n.fontSize||13)+2); content.style.fontSize=n.fontSize+'px'; fmtSzLabel.textContent=n.fontSize+'px'; this._persist() })
+    fmt.appendChild(fmtSmaller); fmt.appendChild(fmtSzLabel); fmt.appendChild(fmtBigger)
+
+    const updateFmt = () => {
+      try {
+        boldBtn.style.background   = document.queryCommandState('bold')   ? 'rgba(255,255,255,0.15)' : ''
+        italicBtn.style.background = document.queryCommandState('italic') ? 'rgba(255,255,255,0.15)' : ''
+        ulBtn.style.background     = document.queryCommandState('insertUnorderedList') ? 'rgba(255,255,255,0.15)' : ''
+        fmtSzLabel.textContent = (n.fontSize||13)+'px'
+        const cur = n.align||'left'
+        for (const a of ['left','center','right']) alignBtns[a].style.background = a===cur ? 'rgba(255,255,255,0.15)' : ''
+      } catch {}
+    }
+
+    const positionFmt = () => {
+      fmt.style.display = 'flex'
+      const fw = fmt.offsetWidth || 230
+      const rect = el.getBoundingClientRect()
+      let x = rect.left + rect.width/2 - fw/2, y = rect.top - 44
+      if (x < 8) x = 8
+      if (x + fw > window.innerWidth - 8) x = window.innerWidth - fw - 8
+      if (y < 8) y = rect.bottom + 8
+      fmt.style.left = x+'px'; fmt.style.top = y+'px'
+      updateFmt()
+    }
+
+    content.addEventListener('mousedown', e=>e.stopPropagation())
+    content.addEventListener('contextmenu', e=>e.stopPropagation())
+    content.addEventListener('focus',  () => requestAnimationFrame(positionFmt))
+    content.addEventListener('blur',   () => { fmt.style.display='none'; n.html=content.innerHTML; n.text=content.textContent; this._persist() })
+    content.addEventListener('input',  () => { n.html=content.innerHTML; n.text=content.textContent; this._persist() })
+    content.addEventListener('keydown', e=>e.stopPropagation())
+    content.addEventListener('mouseup', () => setTimeout(updateFmt, 10))
+    content.addEventListener('keyup',   () => setTimeout(updateFmt, 10))
+
+    el.appendChild(content);el.appendChild(this._resizeHandle(n));this._addAnchors(el,n)
     el.addEventListener('mousedown',e=>this._startNodeDrag(e,n))
     el.addEventListener('contextmenu',e=>{e.preventDefault();e.stopPropagation();if(!this._selected.has(n.id)){this._clearSelection();this._selectNode(n.id)};this._showNodeMenu(e.clientX,e.clientY,n)})
+
+    el._cleanup = () => fmt.remove()
     return el
   },
 
