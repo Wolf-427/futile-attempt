@@ -881,6 +881,31 @@ const Canvas = {
     const existingPaths = svg.querySelectorAll('path:not(#cv-arrow-preview)')
     existingPaths.forEach(p => p.remove())
     
+    // Initialize markers if they don't exist
+    if (!svg.querySelector('defs')) {
+      const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs')
+      const markerColors = {
+        default: 'rgba(201,169,110,0.95)',
+        red:     'rgba(220,80,80,0.95)',
+        blue:    'rgba(80,140,255,0.95)',
+        green:   'rgba(80,195,120,0.95)',
+      }
+      for (const [key, color] of Object.entries(markerColors)) {
+        for (const sel of [false, true]) {
+          const mk = document.createElementNS('http://www.w3.org/2000/svg', 'marker')
+          mk.setAttribute('id', `cvmk-${key}${sel ? '-sel' : ''}`)
+          mk.setAttribute('markerWidth', '8'); mk.setAttribute('markerHeight', '6')
+          mk.setAttribute('refX', '7'); mk.setAttribute('refY', '3'); mk.setAttribute('orient', 'auto')
+          const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon')
+          poly.setAttribute('points', '0 0, 8 3, 0 6')
+          poly.setAttribute('fill', sel ? '#fff' : color)
+          mk.appendChild(poly)
+          defs.appendChild(mk)
+        }
+      }
+      svg.appendChild(defs)
+    }
+
     const arrows=this._board?.arrows||[]; if(!arrows.length) return
 
     // Pre-defined colors for the render loop

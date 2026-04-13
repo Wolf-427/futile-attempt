@@ -437,7 +437,7 @@ const App = {
     }
     boardsHdr.appendChild(boardsLbl); boardsHdr.appendChild(addBoardBtn); boardsSection.appendChild(boardsHdr)
     const masterBtn = document.createElement('button')
-    masterBtn.className = 'sidebar-row' + (s.view==='board'&&s.boardFile==='master.json'?' board-active':'')
+    masterBtn.className = 'sidebar-row master-board-row' + (s.view==='board'&&s.boardFile==='master.json'?' board-active':'')
     const masterIcon = document.createElement('span'); masterIcon.textContent = '◎ '
     const masterName = document.createElement('span'); masterName.textContent = 'Master board'
     masterName.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
@@ -457,10 +457,10 @@ const App = {
       docs.forEach(n => this._docNode(n, docTree, s.docPath, project))
     }).catch(e => console.error("Error reading docs:", e))
 
-    // Clear existing board elements before re-rendering to prevent duplicates
-    boardsSection.querySelectorAll('.sidebar-row:not(.master-board-row)').forEach(el => el.remove())
-
     Project.readBoards(project.dir).then(boards => {
+      // Clear only non-master board rows to prevent duplicates while keeping the Master entry
+      boardsSection.querySelectorAll('.sidebar-row:not(.master-board-row)').forEach(el => el.remove())
+
       boards.filter(b=>!b.isMaster).forEach(b => {
         const btn = document.createElement('button')
         btn.className = 'sidebar-row'+(s.view==='board'&&s.boardFile===b.file?' board-active':'')
