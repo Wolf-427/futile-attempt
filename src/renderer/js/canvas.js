@@ -213,52 +213,6 @@ const Canvas = {
     window.addEventListener('mousemove', e => {
       if (this._panning) { this._pan.x+=e.clientX-this._lastMouse.x; this._pan.y+=e.clientY-this._lastMouse.y; this._lastMouse={x:e.clientX,y:e.clientY}; this._applyTransform(); return }
 
-      // Finalize text draw
-      if (this._textDraw) {
-        const r=this._area.getBoundingClientRect()
-        const cx=e.clientX-r.left, cy=e.clientY-r.top
-        const rawW=Math.abs(cx-this._textDraw.startX), rawH=Math.abs(cy-this._textDraw.startY)
-        document.getElementById('cv-text-ghost')?.remove()
-
-        const wasDrag = rawW > 8 || rawH > 8
-
-        // Convert screen coords to world coords
-        let wx, wy, ww, wh
-        if (wasDrag) {
-          const sx = Math.min(cx, this._textDraw.startX)
-          const sy = Math.min(cy, this._textDraw.startY)
-          wx = (sx - this._pan.x) / this._zoom
-          wy = (sy - this._pan.y) / this._zoom
-          ww = Math.round(rawW / this._zoom)
-          wh = Math.round(rawH / this._zoom)
-        } else {
-          // Just a click — place default-sized box at click point
-          wx = (this._textDraw.startX - this._pan.x) / this._zoom
-          wy = (this._textDraw.startY - this._pan.y) / this._zoom
-          ww = 220; wh = 60
-        }
-
-        const node = { id:crypto.randomUUID(), type:'text', x:Math.round(wx), y:Math.round(wy), width:Math.max(60,ww), height:Math.max(30,wh), text:'', fontSize:16, color:'var(--tx)' }
-        this._board.nodes.push(node)
-        this._renderNode(node)
-        this._snapshot(); this._persist()
-
-        // Immediately focus the text content for typing
-        requestAnimationFrame(() => {
-          const el = document.getElementById(`pin-${node.id}`)
-          const content = el?.querySelector('.pin-text-content')
-          if (content) {
-            content.contentEditable = 'true'
-            content.style.cursor = 'text'
-            content.focus()
-          }
-        })
-
-        this._textDraw = null
-        this._setMode('select') // return to select after placing
-        return
-      }
-
       if (this._drag) {
         const r=this._area.getBoundingClientRect()
         const wx=(e.clientX-r.left-this._pan.x)/this._zoom, wy=(e.clientY-r.top-this._pan.y)/this._zoom
