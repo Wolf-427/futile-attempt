@@ -351,85 +351,73 @@ const Canvas = {
       }
     })
 
-    window.addEventListener('mouseup', () => {
+    window.addEventListener('mouseup', e => {
       this._area.style.cursor = 'default'
-      // Clear highlight and restore any live preview before computing membership
       document.querySelectorAll('.group-drop-target').forEach(el => el.classList.remove('group-drop-target'))
-      // Restore all group DOMs to their stored data bounds before computing membership
       this._board?.nodes?.filter(g => g.type === 'group').forEach(g => this._restoreGroupDOM(g))
 
       if (this._panning) { this._panning = false; return }
 
-      // Finalize text draw
+      // ── Finalize text draw ──────────────────────────────────────────────────
       if (this._textDraw) {
-        const r=this._area.getBoundingClientRect()
-        const cx=e.clientX-r.left, cy=e.clientY-r.top
-        const rawW=Math.abs(cx-this._textDraw.startX), rawH=Math.abs(cy-this._textDraw.startY)
-        document.getElementById('cv-text-ghost')?.remove()
+        const ghost = document.getElementById('cv-text-ghost')
+        if (ghost) ghost.style.display = 'none'
 
-        const wasDrag = rawW > 8 || rawH > 8
+        const r = this._area.getBoundingClientRect()
+        const ex = e.clientX - r.left
+        const ey = e.clientY - r.top
+        const rawW = Math.abs(ex - this._textDraw.startX)
+        const rawH = Math.abs(ey - this._textDraw.startY)
+        const wasDrag = rawW > 6 || rawH > 6
 
-        // Convert screen coords to world coords
         let wx, wy, ww, wh
         if (wasDrag) {
-          const sx = Math.min(cx, this._textDraw.startX)
-          const sy = Math.min(cy, this._textDraw.startY)
+          const sx = Math.min(ex, this._textDraw.startX)
+          const sy = Math.min(ey, this._textDraw.startY)
           wx = (sx - this._pan.x) / this._zoom
           wy = (sy - this._pan.y) / this._zoom
-          ww = Math.round(rawW / this._zoom)
-          wh = Math.round(rawH / this._zoom)
+          ww = Math.max(60,  Math.round(rawW / this._zoom))
+          wh = Math.max(30,  Math.round(rawH / this._zoom))
         } else {
-          // Just a click — place default-sized box at click point
           wx = (this._textDraw.startX - this._pan.x) / this._zoom
           wy = (this._textDraw.startY - this._pan.y) / this._zoom
-          ww = 220; wh = 60
+          ww = 220; wh = 80
         }
 
-        const node = { id:crypto.randomUUID(), type:'text', x:Math.round(wx), y:Math.round(wy), width:Math.max(60,ww), height:Math.max(30,wh), text:'', fontSize:16, color:'var(--tx)' }
+        const node = { id: crypto.randomUUID(), type:'text', x:Math.round(wx), y:Math.round(wy), width:ww, height:wh, text:'', fontSize:16, color:'var(--tx)' }
         this._board.nodes.push(node)
         this._renderNode(node)
         this._snapshot(); this._persist()
 
-        // Immediately focus the text content for typing
         requestAnimationFrame(() => {
           const el = document.getElementById(`pin-${node.id}`)
           const content = el?.querySelector('.pin-text-content')
-          if (content) {
-            content.contentEditable = 'true'
-            content.style.cursor = 'text'
-            content.focus()
-          }
+          if (content) { content.contentEditable = 'true'; content.style.cursor = 'text'; content.focus() }
         })
 
         this._textDraw = null
-        this._setMode('select') // return to select after placing
+        this._setMode('select')
         return
       }
 
+      // ── Finalize node drag ──────────────────────────────────────────────────
       if (this._drag) {
         if (this._drag.type === 'node') {
           const node = this._board.nodes.find(n => n.id === this._drag.id)
           if (node && node.type !== 'group') {
             const targetGroup = this._groupAt(node)
-
-            // Handle old group membership
             const groups = this._board.nodes.filter(n => n.type === 'group')
             for (const g of groups) {
               if (!g.members) continue
-              const wasMember = g.members.includes(node.id)
-              if (!wasMember) continue
+              if (!g.members.includes(node.id)) continue
               if (targetGroup && targetGroup.id === g.id) {
-                // Still in same group — recompute
                 this._recomputeGroup(g)
               } else {
-                // Left this group
                 g.members = g.members.filter(id => id !== node.id)
                 if (g.members.length > 0) this._recomputeGroup(g)
                 else this._removeNode(g.id)
               }
             }
-
-            // Join new group
             if (targetGroup) {
               if (!targetGroup.members) targetGroup.members = []
               if (!targetGroup.members.includes(node.id)) {
@@ -446,17 +434,6 @@ const Canvas = {
 
       this._drag = null
       this._resize = null
-      // Text draw ghost — direct style, no transition
-      if (this._textDraw) {
-        const r=this._area.getBoundingClientRect()
-        const cx=e.clientX-r.left, cy=e.clientY-r.top
-        const x=Math.min(cx,this._textDraw.startX), y=Math.min(cy,this._textDraw.startY)
-        const w=Math.max(1,Math.abs(cx-this._textDraw.startX)), h=Math.max(1,Math.abs(cy-this._textDraw.startY))
-        const ghost=document.getElementById('cv-text-ghost')
-        if (ghost) { ghost.style.left=x+'px'; ghost.style.top=y+'px'; ghost.style.width=w+'px'; ghost.style.height=h+'px' }
-        return
-      }
-
       if (this._marquee) { this._marquee = null; document.getElementById('cv-marquee')?.classList.add('hidden') }
     })
 
