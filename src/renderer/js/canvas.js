@@ -178,11 +178,7 @@ const Canvas = {
     this._area.addEventListener('mousedown', e => {
       if (e.button===2) return
       if (e.button===1||(e.button===0&&e.altKey)) { this._panning=true; this._lastMouse={x:e.clientX,y:e.clientY}; this._area.style.cursor='grabbing'; e.preventDefault(); return }
-      if (e.target!==this._area&&e.target!==this._world) return
-      // Cancel connect
-      if (this._mode==='connect'&&this._connecting) { document.querySelectorAll('.anchor-active').forEach(a=>{a.classList.remove('anchor-active');a.style.opacity='0'}); this._connecting=null; return }
-
-      // Text draw mode — click or drag to place a text field
+      // Text draw mode — must come BEFORE target filter so it works anywhere on canvas
       if (this._mode==='text') {
         const r=this._area.getBoundingClientRect()
         const sx=e.clientX-r.left, sy=e.clientY-r.top
@@ -197,6 +193,11 @@ const Canvas = {
         ghost.style.left=sx+'px'; ghost.style.top=sy+'px'; ghost.style.width='0'; ghost.style.height='0'; ghost.style.display='block'
         return
       }
+
+      // For all other modes, only react to clicks on bare canvas background
+      if (e.target!==this._area&&e.target!==this._world) return
+      // Cancel connect
+      if (this._mode==='connect'&&this._connecting) { document.querySelectorAll('.anchor-active').forEach(a=>{a.classList.remove('anchor-active');a.style.opacity='0'}); this._connecting=null; return }
 
       // Start marquee
       this._clearSelection()
@@ -1077,6 +1078,18 @@ const Canvas = {
       n.html = content.innerHTML; n.text = content.textContent; this._persist()
     })
     content.addEventListener('keydown', e => { e.stopPropagation(); if(e.key==='Escape') content.blur() })
+
+    // Auto-grow: keep el height in sync with content so border never clips
+    const syncHeight = () => {
+      const needed = content.scrollHeight + 20 // 20px = top+bottom padding
+      if (needed > (n.height || 60)) {
+        n.height = needed
+        el.style.minHeight = needed + 'px'
+      }
+    }
+    content.addEventListener('input', syncHeight)
+    // Also sync on focus so existing content is measured correctly
+    content.addEventListener('focus', () => requestAnimationFrame(syncHeight))
     content.addEventListener('mouseup', () => setTimeout(positionFmt, 10))
     content.addEventListener('keyup',  () => setTimeout(positionFmt, 10))
 
