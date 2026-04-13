@@ -113,6 +113,9 @@ const Canvas = {
     }
 
     const sub = document.createElement('button'); sub.className='canvas-tool'; sub.textContent='⊞ Sub-board'; sub.onclick=()=>this._addSubBoard(); tb.appendChild(sub)
+
+    const txtBtn = document.createElement('button'); txtBtn.className='canvas-tool'; txtBtn.textContent='T Text'; txtBtn.title='Add freeform text'
+    txtBtn.onclick=()=>this._addText(); tb.appendChild(txtBtn)
     this._sep(tb)
 
     for (const [l,t,fn] of [['↩','Undo ⌘Z',()=>this._undo()],['↪','Redo ⌘⇧Z',()=>this._redo()]]) {
@@ -565,6 +568,7 @@ const Canvas = {
       {label:'Add purple note',  action:()=>this._addNoteAt(cx,cy,'purple')},
       '---',
       {label:'Add sub-board',    action:()=>this._addSubBoardAt(cx,cy)},
+      {label:'Add text field',    action:()=>this._addTextAt(cx,cy)},
       '---',
       {label:'Reset zoom',       action:()=>{this._zoom=1;this._pan={x:80,y:80};this._applyTransform()}},
     )
@@ -728,6 +732,18 @@ const Canvas = {
   async _addSubBoard(){const count=this._board.nodes.filter(n=>n.type==='subboard').length;const b=await Project.newBoard(this._dir,`Board ${count+1}`);const{wx,wy}=this._center();const n={id:crypto.randomUUID(),type:'subboard',x:Math.round(wx-80),y:Math.round(wy-70),width:160,file:b.file,name:b.name,cover:null};this._board.nodes.push(n);this._renderNode(n);this._snapshot();this._persist()},
   async _addSubBoardAt(cx,cy){const count=this._board.nodes.filter(n=>n.type==='subboard').length;const b=await Project.newBoard(this._dir,`Board ${count+1}`);const{wx,wy}=this._sw(cx,cy);const n={id:crypto.randomUUID(),type:'subboard',x:Math.round(wx-80),y:Math.round(wy-70),width:160,file:b.file,name:b.name,cover:null};this._board.nodes.push(n);this._renderNode(n);this._snapshot();this._persist()},
 
+  _addText() {
+    const {wx,wy} = this._center()
+    const node = { id:crypto.randomUUID(), type:'text', x:Math.round(wx-100), y:Math.round(wy-30), width:200, height:60, text:'Double-click to edit', fontSize:16, color:'var(--tx)' }
+    this._board.nodes.push(node); this._renderNode(node); this._snapshot(); this._persist()
+  },
+
+  _addTextAt(cx, cy) {
+    const {wx,wy} = this._sw(cx, cy)
+    const node = { id:crypto.randomUUID(), type:'text', x:Math.round(wx-100), y:Math.round(wy-30), width:200, height:60, text:'Double-click to edit', fontSize:16, color:'var(--tx)' }
+    this._board.nodes.push(node); this._renderNode(node); this._snapshot(); this._persist()
+  },
+
   _duplicateNode(n){const c={...n,id:crypto.randomUUID(),x:n.x+24,y:n.y+24};this._board.nodes.push(c);this._renderNode(c);this._snapshot();this._persist()},
   _removeNode(id){this._board.nodes=this._board.nodes.filter(n=>n.id!==id);if(this._board.arrows)this._board.arrows=this._board.arrows.filter(a=>a.from!==id&&a.to!==id);document.getElementById(`pin-${id}`)?.remove()},
 
@@ -754,6 +770,7 @@ const Canvas = {
     if(n.type==='note')     return this._makeNote(n)
     if(n.type==='image')    return this._makeImage(n)
     if(n.type==='subboard') return this._makeSub(n)
+    if(n.type==='text')     return this._makeText(n)
     return null
   },
 
@@ -781,21 +798,102 @@ const Canvas = {
     ].join(';')
 
     const label = document.createElement('div')
-    label.style.cssText = 'position:absolute;top:10px;left:16px;font-size:11px;font-weight:600;color:rgba(201,169,110,0.85);letter-spacing:.07em;text-transform:uppercase;pointer-events:none;white-space:nowrap;'
+    label.style.cssText = 'position:absolute;top:8px;left:14px;right:32px;font-size:11px;font-weight:600;color:rgba(201,169,110,0.85);letter-spacing:.07em;text-transform:uppercase;cursor:text;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'
     label.textContent = n.name
     el.appendChild(label)
 
     const del = document.createElement('button')
-    del.style.cssText = 'position:absolute;top:5px;right:10px;background:transparent;border:none;color:rgba(201,169,110,0.5);font-size:16px;cursor:pointer;line-height:1;padding:0;'
+    del.style.cssText = 'position:absolute;top:4px;right:8px;background:transparent;border:none;color:rgba(201,169,110,0.45);font-size:16px;cursor:pointer;line-height:1;padding:0;'
     del.textContent = '×'
     del.addEventListener('mousedown', e => e.stopPropagation())
     del.onclick = () => { this._removeNode(n.id); this._persist() }
     el.appendChild(del)
 
+    // Inline rename — single or double click on the label
+    const startRename = (e) => {
+      e.stopPropagation(); e.preventDefault()
+      const inp = document.createElement('input')
+      inp.value = n.name
+      inp.style.cssText = 'position:absolute;top:5px;left:14px;right:32px;background:rgba(0,0,0,.45);border:none;border-bottom:1.5px solid rgba(201,169,110,0.9);color:rgba(201,169,110,0.95);font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;outline:none;padding:2px 4px;font-family:var(--sans);box-sizing:border-box;'
+      el.appendChild(inp)
+      label.style.visibility = 'hidden'
+      inp.focus(); inp.select()
+      const commit = () => {
+        const v = inp.value.trim()
+        if (v) { n.name = v; label.textContent = v }
+        inp.remove(); label.style.visibility = ''
+        this._persist()
+      }
+      inp.addEventListener('blur', commit)
+      inp.addEventListener('keydown', e2 => {
+        if (e2.key === 'Enter') { e2.preventDefault(); inp.blur() }
+        if (e2.key === 'Escape') { inp.remove(); label.style.visibility = '' }
+        e2.stopPropagation()
+      })
+      inp.addEventListener('mousedown', e2 => e2.stopPropagation())
+    }
+    label.addEventListener('click', startRename)
+    label.addEventListener('dblclick', startRename)
+
     el.appendChild(this._resizeHandle(n))
     el.addEventListener('mousedown', e => this._startGroupDrag(e, n))
-    el.addEventListener('dblclick', e => { e.stopPropagation(); const v=prompt('Group name:',n.name); if(v?.trim()){n.name=v.trim();label.textContent=n.name;this._persist()} })
-    el.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); this._showNodeMenu(e.clientX,e.clientY,n) })
+    el.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); this._showNodeMenu(e.clientX, e.clientY, n) })
+    return el
+  },
+
+  _makeText(n) {
+    const el = document.createElement('div')
+    el.id = `pin-${n.id}`; el.className = 'pin pin-text'
+    el.style.cssText = `left:${n.x}px;top:${n.y}px;width:${n.width||200}px;min-height:${n.height||40}px;position:absolute;z-index:2;`
+
+    const content = document.createElement('div')
+    content.className = 'pin-text-content'
+    content.contentEditable = 'false'
+    content.style.cssText = `font-size:${n.fontSize||16}px;color:${n.color||'var(--tx)'};outline:none;cursor:default;word-break:break-word;`
+    content.textContent = n.text || ''
+    el.appendChild(content)
+
+    // Font size controls (shown on hover)
+    const ctrl = document.createElement('div'); ctrl.className = 'pin-text-ctrl'
+    const smaller = document.createElement('button'); smaller.textContent = 'A−'; smaller.className = 'pin-text-sz'
+    smaller.onclick = e => { e.stopPropagation(); n.fontSize = Math.max(8, (n.fontSize||16)-2); content.style.fontSize = n.fontSize+'px'; this._persist() }
+    const bigger  = document.createElement('button'); bigger.textContent  = 'A+'; bigger.className  = 'pin-text-sz'
+    bigger.onclick  = e => { e.stopPropagation(); n.fontSize = Math.min(96,(n.fontSize||16)+2); content.style.fontSize = n.fontSize+'px'; this._persist() }
+    const del = document.createElement('button'); del.textContent = '×'; del.className = 'pin-text-del'
+    del.addEventListener('mousedown', e => e.stopPropagation())
+    del.onclick = () => { this._removeNode(n.id); this._snapshot(); this._persist() }
+    ctrl.appendChild(smaller); ctrl.appendChild(bigger); ctrl.appendChild(del); el.appendChild(ctrl)
+
+    // Double-click to edit
+    el.addEventListener('dblclick', e => {
+      e.stopPropagation()
+      content.contentEditable = 'true'
+      content.style.cursor = 'text'
+      content.focus()
+      // Place cursor at end
+      const range = document.createRange(); range.selectNodeContents(content); range.collapse(false)
+      window.getSelection().removeAllRanges(); window.getSelection().addRange(range)
+    })
+
+    content.addEventListener('blur', () => {
+      content.contentEditable = 'false'
+      content.style.cursor = 'default'
+      n.text = content.textContent
+      this._persist()
+    })
+
+    content.addEventListener('keydown', e => {
+      e.stopPropagation() // don't fire canvas shortcuts while editing
+      if (e.key === 'Escape') content.blur()
+    })
+
+    this._addAnchors(el, n)
+    el.addEventListener('mousedown', e => {
+      if (content.contentEditable === 'true') { e.stopPropagation(); return } // editing
+      this._startNodeDrag(e, n)
+    })
+    el.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); if(!this._selected.has(n.id)){this._clearSelection();this._selectNode(n.id)}; this._showNodeMenu(e.clientX,e.clientY,n) })
+    el.appendChild(this._resizeHandle(n))
     return el
   },
 

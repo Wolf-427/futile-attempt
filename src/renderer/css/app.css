@@ -496,3 +496,52 @@ input[type=range].editor-font-size::-webkit-slider-thumb { -webkit-appearance: n
   background: rgba(201,169,110,0.1) !important;
   box-shadow: 0 0 0 2px rgba(201,169,110,0.4) !important;
 }
+
+/* ── Freeform text pin ─────────────────────────────────────────────────────── */
+.pin-text {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r2);
+  padding: 8px 10px 10px;
+  cursor: move;
+  min-width: 60px;
+  min-height: 30px;
+}
+.pin-text:hover { border-color: var(--b1); }
+.pin-text-content {
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+  font-family: var(--sans);
+}
+.pin-text-content[contenteditable="true"] {
+  background: rgba(255,255,255,0.03);
+  border-radius: var(--r);
+  caret-color: var(--accent);
+}
+/* Controls shown on hover */
+.pin-text-ctrl {
+  position: absolute;
+  top: -26px; right: 0;
+  display: none;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg2);
+  border: 1px solid var(--b1);
+  border-radius: var(--r2);
+  padding: 3px 6px;
+}
+.pin-text:hover .pin-text-ctrl { display: flex; }
+.pin-text-sz {
+  background: transparent; border: none;
+  color: var(--tx3); font-size: 11px;
+  cursor: pointer; padding: 0 3px; font-family: var(--sans);
+}
+.pin-text-sz:hover { color: var(--tx); }
+.pin-text-del {
+  background: transparent; border: none;
+  color: var(--tx3); font-size: 14px;
+  cursor: pointer; padding: 0 2px; line-height: 1;
+}
+.pin-text-del:hover { color: var(--err); }
