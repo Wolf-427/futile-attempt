@@ -496,52 +496,63 @@ input[type=range].editor-font-size::-webkit-slider-thumb { -webkit-appearance: n
   background: rgba(201,169,110,0.1) !important;
   box-shadow: 0 0 0 2px rgba(201,169,110,0.4) !important;
 }
-
 /* ── Freeform text pin ─────────────────────────────────────────────────────── */
 .pin-text {
+  display: flex;
+  flex-direction: column;
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--r2);
-  padding: 8px 10px 10px;
   cursor: move;
   min-width: 60px;
-  min-height: 30px;
+  min-height: 40px;
+  transition: border-color .15s;
 }
-.pin-text:hover { border-color: var(--b1); }
+.pin-text:hover,
+.pin-text.pin-selected { border-color: rgba(255,255,255,0.1); }
+
 .pin-text-content {
+  flex: 1;
   outline: none;
   white-space: pre-wrap;
   word-break: break-word;
-  line-height: 1.5;
   font-family: var(--sans);
+  padding: 6px 8px;
+  line-height: 1.5;
+  cursor: default;
 }
 .pin-text-content[contenteditable="true"] {
-  background: rgba(255,255,255,0.03);
-  border-radius: var(--r);
+  cursor: text;
   caret-color: var(--accent);
 }
-/* Controls shown on hover */
-.pin-text-ctrl {
-  position: absolute;
-  top: -26px; right: 0;
+
+/* Bottom toolbar — always inside, never floating above other elements */
+.pin-text-bar {
   display: none;
   align-items: center;
-  gap: 4px;
-  background: var(--bg2);
-  border: 1px solid var(--b1);
-  border-radius: var(--r2);
-  padding: 3px 6px;
+  gap: 2px;
+  padding: 3px 6px 4px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  background: rgba(0,0,0,0.25);
+  border-radius: 0 0 var(--r2) var(--r2);
+  flex-shrink: 0;
 }
-.pin-text:hover .pin-text-ctrl { display: flex; }
+.pin-text:hover .pin-text-bar { display: flex; }
 .pin-text-sz {
-  background: transparent; border: none;
-  color: var(--tx3); font-size: 11px;
-  cursor: pointer; padding: 0 3px; font-family: var(--sans);
+  background: transparent; border: 1px solid var(--b1);
+  border-radius: var(--r); color: var(--tx3); font-size: 11px;
+  cursor: pointer; padding: 1px 6px; line-height: 1.4;
+  font-family: var(--mono);
 }
-.pin-text-sz:hover { color: var(--tx); }
+.pin-text-sz:hover { color: var(--tx); border-color: var(--b2); }
+.pin-text-sz-label {
+  font-size: 10px; color: var(--tx3); font-family: var(--mono);
+  min-width: 28px; text-align: center;
+}
 .pin-text-del {
   background: transparent; border: none;
   color: var(--tx3); font-size: 14px;
-  cursor: pointer; padding: 0 2px; line-height: 1;
+  cursor: pointer; padding: 0 3px; line-height: 1;
+  margin-left: 2px;
 }
 .pin-text-del:hover { color: var(--err); }

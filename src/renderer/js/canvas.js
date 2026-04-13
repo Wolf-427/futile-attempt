@@ -140,7 +140,13 @@ const Canvas = {
     this._mode = m
     if (this._connecting) { document.querySelectorAll('.anchor-active').forEach(a=>{a.classList.remove('anchor-active');a.style.opacity='0'}); this._connecting=null }
     this._refreshModeUI()
-    this._area.style.cursor = m === 'text' ? 'crosshair' : 'default'
+    if (m === 'text') {
+      this._area.style.cursor = 'text'
+      this._area.classList.add('mode-text')
+    } else {
+      this._area.style.cursor = 'default'
+      this._area.classList.remove('mode-text')
+    }
     document.getElementById('cv-hint').textContent = m==='select'
       ? 'Scroll to pan · Pinch to zoom · Drag canvas to marquee-select · Shift+click for multi · Right-click for menu · ⌘G to group'
       : m === 'text' ? 'Click to place a text field · Click and drag to draw its size'
@@ -176,14 +182,19 @@ const Canvas = {
       // Cancel connect
       if (this._mode==='connect'&&this._connecting) { document.querySelectorAll('.anchor-active').forEach(a=>{a.classList.remove('anchor-active');a.style.opacity='0'}); this._connecting=null; return }
 
-      // Text draw mode — start drawing a text box
+      // Text draw mode — click or drag to place a text field
       if (this._mode==='text') {
         const r=this._area.getBoundingClientRect()
-        this._textDraw = { startX: e.clientX-r.left, startY: e.clientY-r.top, clientX: e.clientX, clientY: e.clientY }
-        // Show a ghost rect
-        const ghost = document.getElementById('cv-marquee')
-        ghost.style.cssText=`left:${this._textDraw.startX}px;top:${this._textDraw.startY}px;width:0;height:0;border-color:var(--accent);`
-        ghost.classList.remove('hidden')
+        const sx=e.clientX-r.left, sy=e.clientY-r.top
+        this._textDraw = { startX:sx, startY:sy, moved:false }
+        // Ghost rect — inline element, no transitions
+        let ghost = document.getElementById('cv-text-ghost')
+        if (!ghost) {
+          ghost = document.createElement('div'); ghost.id='cv-text-ghost'
+          ghost.style.cssText='position:absolute;pointer-events:none;z-index:50;box-sizing:border-box;border:1.5px dashed var(--accent);background:rgba(201,169,110,0.06);border-radius:3px;display:none;'
+          this._area.appendChild(ghost)
+        }
+        ghost.style.left=sx+'px'; ghost.style.top=sy+'px'; ghost.style.width='0'; ghost.style.height='0'; ghost.style.display='block'
         return
       }
 
@@ -203,7 +214,7 @@ const Canvas = {
         const r=this._area.getBoundingClientRect()
         const cx=e.clientX-r.left, cy=e.clientY-r.top
         const rawW=Math.abs(cx-this._textDraw.startX), rawH=Math.abs(cy-this._textDraw.startY)
-        const ghost=document.getElementById('cv-marquee'); ghost?.classList.add('hidden')
+        document.getElementById('cv-text-ghost')?.remove()
 
         const wasDrag = rawW > 8 || rawH > 8
 
@@ -314,14 +325,14 @@ const Canvas = {
         return
       }
 
-      // Text draw ghost
+      // Text draw ghost — direct style, no transition
       if (this._textDraw) {
         const r=this._area.getBoundingClientRect()
         const cx=e.clientX-r.left, cy=e.clientY-r.top
         const x=Math.min(cx,this._textDraw.startX), y=Math.min(cy,this._textDraw.startY)
-        const w=Math.abs(cx-this._textDraw.startX), h=Math.abs(cy-this._textDraw.startY)
-        const ghost=document.getElementById('cv-marquee')
-        if(ghost) ghost.style.cssText=`position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;border-color:var(--accent);`
+        const w=Math.max(1,Math.abs(cx-this._textDraw.startX)), h=Math.max(1,Math.abs(cy-this._textDraw.startY))
+        const ghost=document.getElementById('cv-text-ghost')
+        if (ghost) { ghost.style.left=x+'px'; ghost.style.top=y+'px'; ghost.style.width=w+'px'; ghost.style.height=h+'px' }
         return
       }
 
@@ -353,7 +364,7 @@ const Canvas = {
         const r=this._area.getBoundingClientRect()
         const cx=e.clientX-r.left, cy=e.clientY-r.top
         const rawW=Math.abs(cx-this._textDraw.startX), rawH=Math.abs(cy-this._textDraw.startY)
-        const ghost=document.getElementById('cv-marquee'); ghost?.classList.add('hidden')
+        document.getElementById('cv-text-ghost')?.remove()
 
         const wasDrag = rawW > 8 || rawH > 8
 
@@ -434,14 +445,14 @@ const Canvas = {
 
       this._drag = null
       this._resize = null
-      // Text draw ghost
+      // Text draw ghost — direct style, no transition
       if (this._textDraw) {
         const r=this._area.getBoundingClientRect()
         const cx=e.clientX-r.left, cy=e.clientY-r.top
         const x=Math.min(cx,this._textDraw.startX), y=Math.min(cy,this._textDraw.startY)
-        const w=Math.abs(cx-this._textDraw.startX), h=Math.abs(cy-this._textDraw.startY)
-        const ghost=document.getElementById('cv-marquee')
-        if(ghost) ghost.style.cssText=`position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;border-color:var(--accent);`
+        const w=Math.max(1,Math.abs(cx-this._textDraw.startX)), h=Math.max(1,Math.abs(cy-this._textDraw.startY))
+        const ghost=document.getElementById('cv-text-ghost')
+        if (ghost) { ghost.style.left=x+'px'; ghost.style.top=y+'px'; ghost.style.width=w+'px'; ghost.style.height=h+'px' }
         return
       }
 
@@ -982,11 +993,13 @@ const Canvas = {
     content.textContent = n.text || ''
     el.appendChild(content)
 
-    // Font size controls (shown on hover)
+    // Controls — shown inside pin on hover, at the top-right corner
     const ctrl = document.createElement('div'); ctrl.className = 'pin-text-ctrl'
     const smaller = document.createElement('button'); smaller.textContent = 'A−'; smaller.className = 'pin-text-sz'
+    smaller.addEventListener('mousedown', e => e.stopPropagation())
     smaller.onclick = e => { e.stopPropagation(); n.fontSize = Math.max(8, (n.fontSize||16)-2); content.style.fontSize = n.fontSize+'px'; this._persist() }
     const bigger  = document.createElement('button'); bigger.textContent  = 'A+'; bigger.className  = 'pin-text-sz'
+    bigger.addEventListener('mousedown', e => e.stopPropagation())
     bigger.onclick  = e => { e.stopPropagation(); n.fontSize = Math.min(96,(n.fontSize||16)+2); content.style.fontSize = n.fontSize+'px'; this._persist() }
     const del = document.createElement('button'); del.textContent = '×'; del.className = 'pin-text-del'
     del.addEventListener('mousedown', e => e.stopPropagation())
