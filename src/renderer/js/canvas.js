@@ -884,8 +884,14 @@ const Canvas = {
     this._board.nodes.push(node); this._renderNode(node); this._snapshot(); this._persist()
   },
 
-  _duplicateNode(n){const c={...n,id:crypto.randomUUID(),x:n.x+24,y:n.y+24};this._board.nodes.push(c);this._renderNode(c);this._snapshot();this._persist()},
-  _removeNode(id){this._board.nodes=this._board.nodes.filter(n=>n.id!==id);if(this._board.arrows)this._board.arrows=this._board.arrows.filter(a=>a.from!==id&&a.to!==id);document.getElementById(`pin-${id}`)?.remove()},
+  _duplicateNode(n){const copy={...n,id:crypto.randomUUID(),x:n.x+24,y:n.y+24};this._board.nodes.push(copy);this._renderNode(copy);this._snapshot();this._persist()},
+  _removeNode(id){
+    this._board.nodes=this._board.nodes.filter(n=>n.id!==id)
+    if(this._board.arrows)this._board.arrows=this._board.arrows.filter(a=>a.from!==id&&a.to!==id)
+    const el=document.getElementById(`pin-${id}`)
+    if(el?._cleanup) el._cleanup()
+    el?.remove()
+  },
 
   async _dropImage(e,file){const r=this._area.getBoundingClientRect();const wx=Math.round((e.clientX-r.left-this._pan.x)/this._zoom),wy=Math.round((e.clientY-r.top-this._pan.y)/this._zoom);const dest=`${this._dir}/references/${crypto.randomUUID()}-${file.name}`;await api.fs.copy(file.path,dest);const n={id:crypto.randomUUID(),type:'image',x:wx,y:wy,width:240,src:dest};this._board.nodes.push(n);this._renderNode(n);this._snapshot();this._persist()},
 
@@ -984,58 +990,112 @@ const Canvas = {
   _makeText(n) {
     const el = document.createElement('div')
     el.id = `pin-${n.id}`; el.className = 'pin pin-text'
-    el.style.cssText = `left:${n.x}px;top:${n.y}px;width:${n.width||200}px;min-height:${n.height||40}px;position:absolute;z-index:2;`
+    el.style.cssText = `left:${n.x}px;top:${n.y}px;width:${n.width||220}px;min-height:${n.height||60}px;position:absolute;z-index:2;display:flex;flex-direction:column;`
 
     const content = document.createElement('div')
     content.className = 'pin-text-content'
     content.contentEditable = 'false'
-    content.style.cssText = `font-size:${n.fontSize||16}px;color:${n.color||'var(--tx)'};outline:none;cursor:default;word-break:break-word;`
-    content.textContent = n.text || ''
+    content.innerHTML = n.html || (n.text ? n.text.replace(/&/g,'&amp;').replace(/</g,'&lt;') : '')
+    content.style.cssText = `font-size:${n.fontSize||16}px;color:${n.color||'var(--tx)'};outline:none;cursor:default;word-break:break-word;flex:1;padding:6px 8px;line-height:1.5;font-family:var(--sans);`
     el.appendChild(content)
 
-    // Controls — shown inside pin on hover, at the top-right corner
-    const ctrl = document.createElement('div'); ctrl.className = 'pin-text-ctrl'
-    const smaller = document.createElement('button'); smaller.textContent = 'A−'; smaller.className = 'pin-text-sz'
-    smaller.addEventListener('mousedown', e => e.stopPropagation())
-    smaller.onclick = e => { e.stopPropagation(); n.fontSize = Math.max(8, (n.fontSize||16)-2); content.style.fontSize = n.fontSize+'px'; this._persist() }
-    const bigger  = document.createElement('button'); bigger.textContent  = 'A+'; bigger.className  = 'pin-text-sz'
-    bigger.addEventListener('mousedown', e => e.stopPropagation())
-    bigger.onclick  = e => { e.stopPropagation(); n.fontSize = Math.min(96,(n.fontSize||16)+2); content.style.fontSize = n.fontSize+'px'; this._persist() }
-    const del = document.createElement('button'); del.textContent = '×'; del.className = 'pin-text-del'
-    del.addEventListener('mousedown', e => e.stopPropagation())
-    del.onclick = () => { this._removeNode(n.id); this._snapshot(); this._persist() }
-    ctrl.appendChild(smaller); ctrl.appendChild(bigger); ctrl.appendChild(del); el.appendChild(ctrl)
+    // Floating format toolbar — shown when text is selected inside content
+    const fmt = document.createElement('div')
+    fmt.className = 'text-fmt-bar'
+    fmt.style.display = 'none'
+    document.body.appendChild(fmt)
 
-    // Double-click to edit
-    el.addEventListener('dblclick', e => {
-      e.stopPropagation()
-      content.contentEditable = 'true'
-      content.style.cursor = 'text'
-      content.focus()
-      // Place cursor at end
-      const range = document.createRange(); range.selectNodeContents(content); range.collapse(false)
-      window.getSelection().removeAllRanges(); window.getSelection().addRange(range)
-    })
+    const fmtBtn = (label, cmd, arg) => {
+      const b = document.createElement('button'); b.className = 'text-fmt-btn'; b.innerHTML = label
+      b.addEventListener('mousedown', e => {
+        e.preventDefault(); e.stopPropagation()
+        document.execCommand(cmd, false, arg || null)
+        content.focus()
+        updateFmt()
+      })
+      fmt.appendChild(b); return b
+    }
+    const boldBtn   = fmtBtn('<strong>B</strong>', 'bold')
+    const italicBtn = fmtBtn('<em>I</em>', 'italic')
+    const ulBtn     = fmtBtn('•—', 'insertUnorderedList')
+    // Font size in format bar
+    const fmtSep = document.createElement('div'); fmtSep.style.cssText='width:1px;height:14px;background:rgba(255,255,255,0.12);margin:0 3px;'; fmt.appendChild(fmtSep)
+    const fmtSmaller = document.createElement('button'); fmtSmaller.className='text-fmt-btn'; fmtSmaller.textContent='A−'
+    fmtSmaller.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); n.fontSize=Math.max(8,(n.fontSize||16)-2); content.style.fontSize=n.fontSize+'px'; this._persist() })
+    fmt.appendChild(fmtSmaller)
+    const fmtSzLabel = document.createElement('span'); fmtSzLabel.style.cssText='font-size:10px;color:var(--tx3);font-family:var(--mono);padding:0 2px;min-width:26px;text-align:center;'; fmtSzLabel.textContent=(n.fontSize||16)+'px'; fmt.appendChild(fmtSzLabel)
+    const fmtBigger  = document.createElement('button'); fmtBigger.className='text-fmt-btn';  fmtBigger.textContent='A+'
+    fmtBigger.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); n.fontSize=Math.min(96,(n.fontSize||16)+2); content.style.fontSize=n.fontSize+'px'; fmtSzLabel.textContent=n.fontSize+'px'; this._persist() })
+    fmt.appendChild(fmtBigger)
 
-    content.addEventListener('blur', () => {
-      content.contentEditable = 'false'
-      content.style.cursor = 'default'
-      n.text = content.textContent
-      this._persist()
-    })
+    const updateFmt = () => {
+      try {
+        boldBtn.style.background   = document.queryCommandState('bold')   ? 'rgba(255,255,255,0.15)' : ''
+        italicBtn.style.background = document.queryCommandState('italic') ? 'rgba(255,255,255,0.15)' : ''
+        ulBtn.style.background     = document.queryCommandState('insertUnorderedList') ? 'rgba(255,255,255,0.15)' : ''
+        fmtSzLabel.textContent = (n.fontSize||16)+'px'
+      } catch {}
+    }
 
-    content.addEventListener('keydown', e => {
-      e.stopPropagation() // don't fire canvas shortcuts while editing
-      if (e.key === 'Escape') content.blur()
+    const positionFmt = () => {
+      const sel = window.getSelection()
+      if (!sel || sel.isCollapsed || !sel.rangeCount) { fmt.style.display='none'; return }
+      // Check selection is inside this content
+      const range = sel.getRangeAt(0)
+      if (!content.contains(range.commonAncestorContainer)) { fmt.style.display='none'; return }
+      const rect = range.getBoundingClientRect()
+      if (!rect.width) { fmt.style.display='none'; return }
+      fmt.style.display = 'flex'
+      // Position above the selection
+      const fw = fmt.offsetWidth || 200
+      let x = rect.left + rect.width/2 - fw/2
+      let y = rect.top - 40
+      if (x < 8) x = 8
+      if (x + fw > window.innerWidth - 8) x = window.innerWidth - fw - 8
+      if (y < 8) y = rect.bottom + 8
+      fmt.style.left = x + 'px'; fmt.style.top = y + 'px'
+      updateFmt()
+    }
+
+    // Small × delete handle in corner (only on hover, not during edit)
+    const delBtn = document.createElement('button'); delBtn.className='pin-text-del-corner'
+    delBtn.textContent='×'; delBtn.title='Delete'
+    delBtn.addEventListener('mousedown', e=>e.stopPropagation())
+    delBtn.onclick=()=>{ fmt.remove(); this._removeNode(n.id); this._snapshot(); this._persist() }
+    el.appendChild(delBtn)
+
+    // Enter edit mode on double-click or when placed fresh (text is empty)
+    const startEdit = () => {
+      content.contentEditable = 'true'; content.style.cursor = 'text'; content.focus()
+    }
+    el.addEventListener('dblclick', e => { e.stopPropagation(); startEdit() })
+
+    content.addEventListener('focus',  () => { content.contentEditable='true'; content.style.cursor='text' })
+    content.addEventListener('blur',   () => {
+      content.contentEditable='false'; content.style.cursor='default'
+      fmt.style.display='none'
+      n.html = content.innerHTML; n.text = content.textContent; this._persist()
     })
+    content.addEventListener('keydown', e => { e.stopPropagation(); if(e.key==='Escape') content.blur() })
+    content.addEventListener('mouseup', () => setTimeout(positionFmt, 10))
+    content.addEventListener('keyup',  () => setTimeout(positionFmt, 10))
 
     this._addAnchors(el, n)
     el.addEventListener('mousedown', e => {
-      if (content.contentEditable === 'true') { e.stopPropagation(); return } // editing
+      if (content.contentEditable==='true') { e.stopPropagation(); return }
       this._startNodeDrag(e, n)
     })
-    el.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); if(!this._selected.has(n.id)){this._clearSelection();this._selectNode(n.id)}; this._showNodeMenu(e.clientX,e.clientY,n) })
+    el.addEventListener('contextmenu', e => {
+      e.preventDefault(); e.stopPropagation()
+      if(!this._selected.has(n.id)){this._clearSelection();this._selectNode(n.id)}
+      this._showNodeMenu(e.clientX,e.clientY,n)
+    })
     el.appendChild(this._resizeHandle(n))
+
+    // Clean up floating fmt bar when node is removed
+    const origRemove = this._removeNode.bind(this)
+    el._cleanup = () => fmt.remove()
+
     return el
   },
 
