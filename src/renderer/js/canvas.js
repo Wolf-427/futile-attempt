@@ -330,11 +330,24 @@ const Canvas = {
       if (this._resize) {
         const dx=e.clientX-this._resize.startX, dy=e.clientY-this._resize.startY
         const node=this._board.nodes.find(n=>n.id===this._resize.id)
-        if (node) { 
-          node.width=Math.max(120,Math.round(this._resize.startW+dx/this._zoom))
-          node.height=Math.max(80,Math.round(this._resize.startH+dy/this._zoom))
+        if (node) {
+          let nw = Math.max(120, Math.round(this._resize.startW + dx / this._zoom))
+          let nh = Math.max(40, Math.round(this._resize.startH + dy / this._zoom))
+
+          if (node.type === 'image' && node.aspectRatio) {
+            // Lock ratio based on the axis with the most movement
+            if (Math.abs(dx) > Math.abs(dy)) {
+              nh = Math.round(nw / node.aspectRatio)
+            } else {
+              nw = Math.round(nh * node.aspectRatio)
+            }
+          }
+
+          node.width = nw
+          node.height = nh
+
           const el=document.getElementById(`pin-${node.id}`)
-          if(el){el.style.width=node.width+'px'; if(node.type==='text'){el.style.minHeight=node.height+'px';el.style.height=''}else{el.style.height=node.height+'px'}}
+          if(el){ el.style.width=node.width+'px'; el.style.height=node.height+'px' }
           this._renderArrows() 
         }
         return
@@ -490,14 +503,32 @@ const Canvas = {
 
     document.addEventListener('mousedown', e => { if(!e.target.closest('#canvas-ctx')) this._hideMenu() }, true)
 
-    // Drop
-    this._area.addEventListener('dragover', e => { if(e.dataTransfer.types.includes('text/board-file')||e.dataTransfer.files?.length) e.preventDefault() })
-    this._area.addEventListener('drop', e => {
-      const bf=e.dataTransfer.getData('text/board-file')
-      const r=this._area.getBoundingClientRect()
-      const wx=Math.round((e.clientX-r.left-this._pan.x)/this._zoom), wy=Math.round((e.clientY-r.top-this._pan.y)/this._zoom)
-      if (bf) { e.preventDefault(); const n={id:crypto.randomUUID(),type:'subboard',x:wx-80,y:wy-70,width:160,file:bf,name:e.dataTransfer.getData('text/board-name'),cover:null}; this._board.nodes.push(n); this._renderNode(n); this._snapshot(); this._persist(); return }
-      const f=e.dataTransfer.files?.[0]; if(f?.type.startsWith('image/'))this._dropImage(e,f)
+    // Drop & Paste
+    window.addEventListener('paste', e => {
+      if (Store.get('view') !== 'board') return
+      const tag = document.activeElement?.tagName
+      if (tag === 'TEXTAREA' || tag === 'INPUT' || document.activeElement?.contentEditable === 'true') return
+      const items = e.clipboardData?.items; if (!items) return
+      for (const item of items) if (item.type.startsWith('image/')) this._handleImageSource(item.getAsFile(), { x: window.innerWidth / 2, y: window.innerHeight / 2 })
+    })
+
+    this._area.addEventListener('dragover', e => { 
+      if (e.dataTransfer.types.includes('text/board-file') || e.dataTransfer.types.includes('Files') || e.dataTransfer.types.includes('text/uri-list')) e.preventDefault() 
+    })
+    this._area.addEventListener('drop', async e => {
+      const bf = e.dataTransfer.getData('text/board-file'), pos = { x: e.clientX, y: e.clientY }
+      if (bf) { 
+        e.preventDefault(); const {wx, wy} = this._sw(pos.x, pos.y)
+        const n={id:crypto.randomUUID(),type:'subboard',x:Math.round(wx-80),y:Math.round(wy-70),width:160,file:bf,name:e.dataTransfer.getData('text/board-name'),cover:null}; 
+        this._board.nodes.push(n); this._renderNode(n); this._snapshot(); this._persist(); return 
+      }
+      if (e.dataTransfer.files?.length) {
+        e.preventDefault(); for (const f of e.dataTransfer.files) if (f.type.startsWith('image/')) this._handleImageSource(f, pos)
+      } else {
+        const html = e.dataTransfer.getData('text/html'), uri = e.dataTransfer.getData('text/uri-list')
+        if (html) { const div = document.createElement('div'); div.innerHTML = html; const img = div.querySelector('img'); if (img?.src) { e.preventDefault(); this._handleImageSource(img.src, pos) } }
+        else if (uri) { e.preventDefault(); this._handleImageSource(uri, pos) }
+      }
     })
 
     // Keyboard shortcuts
@@ -1070,7 +1101,29 @@ const Canvas = {
     el?.remove()
   },
 
-  async _dropImage(e,file){const r=this._area.getBoundingClientRect();const wx=Math.round((e.clientX-r.left-this._pan.x)/this._zoom),wy=Math.round((e.clientY-r.top-this._pan.y)/this._zoom);const dest=`${this._dir}/references/${crypto.randomUUID()}-${file.name}`;await api.fs.copy(file.path,dest);const n={id:crypto.randomUUID(),type:'image',x:wx,y:wy,width:240,src:dest};this._board.nodes.push(n);this._renderNode(n);this._snapshot();this._persist()},
+  async _handleImageSource(source, screenPos) {
+    const {wx, wy} = this._sw(screenPos.x, screenPos.y), id = crypto.randomUUID()
+    let rel = `references/${id}`
+    try {
+      if (source instanceof File && source.path) {
+        rel += `-${source.name}`; await api.fs.copy(source.path, `${this._dir}/${rel}`)
+      } else {
+        let blob = source
+        if (typeof source === 'string') { const r = await fetch(source); blob = await r.blob() }
+        const ext = blob.type.split('/')[1] || 'png'
+        rel += `-${typeof source === 'string' ? 'web' : 'pasted'}-image.${ext}`
+        const reader = new FileReader()
+        reader.onload = async () => {
+          await api.fs.writeBin(`${this._dir}/${rel}`, reader.result.split(',')[1])
+          const n = { id, type: 'image', x: Math.round(wx), y: Math.round(wy), width: 240, src: rel }
+          this._board.nodes.push(n); this._renderNode(n); this._snapshot(); this._persist()
+        }
+        reader.readAsDataURL(blob); return
+      }
+      const n = { id, type: 'image', x: Math.round(wx), y: Math.round(wy), width: 240, src: rel }
+      this._board.nodes.push(n); this._renderNode(n); this._snapshot(); this._persist()
+    } catch (e) { console.error('Image add err:', e) }
+  },
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -1391,11 +1444,28 @@ const Canvas = {
 
   _makeImage(n) {
     const el=document.createElement('div');el.id=`pin-${n.id}`;el.className='pin pin-img'
-    el.style.cssText=`left:${n.x}px;top:${n.y}px;width:${n.width||240}px;position:absolute;z-index:2;`
-    const bar=document.createElement('div');bar.className='pin-bar';const lbl=document.createElement('span');lbl.className='pin-label';lbl.style.color='var(--tx2)';lbl.textContent='Image'
-    bar.appendChild(lbl);bar.appendChild(this._xBtn(n));el.appendChild(bar)
-    const ph=document.createElement('div');ph.style.cssText='height:80px;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--tx3);';ph.textContent='Loading…';el.appendChild(ph)
-    api.fs.readBin(n.src).then(b=>{const img=document.createElement('img');img.src=`data:image/jpeg;base64,${b}`;img.draggable=false;img.style.cssText='display:block;width:100%;border-radius:0 0 6px 6px;';ph.replaceWith(img)}).catch(()=>{ph.textContent='Not found'})
+    el.style.cssText=`left:${n.x}px;top:${n.y}px;width:${n.width||240}px;height:${n.height?n.height+'px':'auto'};position:absolute;z-index:2;display:flex;flex-direction:column;`
+    
+    // Floating delete corner (like text pins)
+    const del = document.createElement('button'); del.className='pin-text-del-corner'
+    del.textContent='×'; del.addEventListener('mousedown', e=>e.stopPropagation())
+    del.onclick=()=>{ this._removeNode(n.id); this._snapshot(); this._persist() }
+    el.appendChild(del)
+
+    const ph=document.createElement('div');ph.style.cssText='flex:1;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--tx3);min-height:80px;';ph.textContent='Loading…';el.appendChild(ph)
+    
+    const fullPath = n.src.startsWith('/') ? n.src : `${this._dir}/${n.src}`
+    const img = document.createElement('img')
+    img.src = `file://${fullPath}`; img.draggable = false
+    img.style.cssText = 'display:block;width:100%;height:100%;object-fit:contain;border-radius:8px;'
+    img.onload = () => {
+      ph.replaceWith(img)
+      n.aspectRatio = img.naturalWidth / img.naturalHeight
+      if (!n.height) { n.height = Math.round(n.width / n.aspectRatio); el.style.height = n.height + 'px'; this._persist() }
+    }
+    img.onerror = () => ph.textContent = 'Not found'
+
+    el.appendChild(this._resizeHandle(n))
     this._addAnchors(el,n);el.addEventListener('mousedown',e=>this._startNodeDrag(e,n))
     el.addEventListener('contextmenu',e=>{e.preventDefault();e.stopPropagation();if(!this._selected.has(n.id)){this._clearSelection();this._selectNode(n.id)};this._showNodeMenu(e.clientX,e.clientY,n)})
     return el

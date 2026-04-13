@@ -544,6 +544,7 @@ input[type=range].editor-font-size::-webkit-slider-thumb { -webkit-appearance: n
   z-index: 5;
 }
 .pin-text:hover .pin-text-del-corner { display: block; }
+.pin-img:hover .pin-text-del-corner { display: block; }
 .pin-text-del-corner:hover { color: var(--err); }
 
 /* Floating selection format bar — fixed to viewport, shown on text selection */

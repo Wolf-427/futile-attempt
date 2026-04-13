@@ -50,6 +50,11 @@ function setupStore() {
 function setupFs() {
   ipcMain.handle('fs:read',    (_,  p)    => fs.readFile(p, 'utf8'))
   ipcMain.handle('fs:readBin', async (_, p) => (await fs.readFile(p)).toString('base64'))
+  ipcMain.handle('fs:writeBin', async (_, p, b64) => {
+    await fs.mkdir(path.dirname(p), { recursive: true })
+    await fs.writeFile(p, Buffer.from(b64, 'base64'))
+    return true
+  })
   ipcMain.handle('fs:write',   async (_, p, c) => {
     await fs.mkdir(path.dirname(p), { recursive: true })
     await fs.writeFile(p, c, 'utf8')

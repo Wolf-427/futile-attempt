@@ -5,7 +5,7 @@ const App = {
     // Ensure the last active project still exists on disk before rendering
     await Store.verifyProject()
 
-    Store.sub(['activeId', 'view', 'sidebar', 'boardFile', 'boardStack'], () => {
+    Store.sub(['activeId', 'view', 'sidebar', 'boardFile', 'boardStack', 'docPath'], () => {
       this.render()
     })
 
@@ -428,6 +428,7 @@ const App = {
     const boardsSection = document.createElement('div'); boardsSection.className = 'sidebar-section'
     const boardsHdr = document.createElement('div'); boardsHdr.className = 'sidebar-header'
     const boardsLbl = document.createElement('span'); boardsLbl.className = 'sidebar-label'; boardsLbl.textContent = 'Canvas boards'
+    
     const addBoardBtn = document.createElement('button'); addBoardBtn.className = 'sidebar-add'; addBoardBtn.textContent = '+'
     addBoardBtn.onclick = async () => {
       const boards = await Project.readBoards(project.dir)
@@ -436,8 +437,12 @@ const App = {
     }
     boardsHdr.appendChild(boardsLbl); boardsHdr.appendChild(addBoardBtn); boardsSection.appendChild(boardsHdr)
     const masterBtn = document.createElement('button')
-    masterBtn.className = 'sidebar-row'+(s.view==='board'&&s.boardFile==='master.json'?' board-active':'')
-    masterBtn.textContent = '◎ Master board'
+    masterBtn.className = 'sidebar-row' + (s.view==='board'&&s.boardFile==='master.json'?' board-active':'')
+    const masterIcon = document.createElement('span'); masterIcon.textContent = '◎ '
+    const masterName = document.createElement('span'); masterName.textContent = 'Master board'
+    masterName.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+    masterBtn.appendChild(masterIcon); masterBtn.appendChild(masterName)
+
     masterBtn.onclick = () => this.openBoard('master.json', false)
     boardsSection.appendChild(masterBtn); container.appendChild(boardsSection)
 
@@ -450,7 +455,11 @@ const App = {
     Project.readDocs(project.dir).then(docs => {
       if (!docs.length) { const e=document.createElement('span'); e.className='sidebar-empty'; e.textContent='No documents yet'; docTree.appendChild(e); return }
       docs.forEach(n => this._docNode(n, docTree, s.docPath, project))
-    })
+    }).catch(e => console.error("Error reading docs:", e))
+
+    // Clear existing board elements before re-rendering to prevent duplicates
+    boardsSection.querySelectorAll('.sidebar-row:not(.master-board-row)').forEach(el => el.remove())
+
     Project.readBoards(project.dir).then(boards => {
       boards.filter(b=>!b.isMaster).forEach(b => {
         const btn = document.createElement('button')
@@ -470,10 +479,12 @@ const App = {
     })
   },
 
+
   _docNode(node, container, activePath, project) {
     if (node.type === 'file') {
       const btn = document.createElement('button')
-      btn.className = 'sidebar-row'+(activePath===node.path?' active':'')
+      const isCurrentDoc = activePath === node.path
+      btn.className = 'sidebar-row' + (isCurrentDoc && Store.get('view') === 'editor' ? ' active' : '')
       btn.title = node.name
 
       // Editable label
@@ -481,8 +492,6 @@ const App = {
       lbl.textContent = `📄 ${node.name}`
       lbl.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
       btn.appendChild(lbl)
-      btn.style.cssText = 'display:flex;align-items:center;gap:6px;padding:5px 6px;border:none;border-radius:var(--r);width:100%;text-align:left;font-size:12.5px;background:transparent;color:var(--tx2);cursor:pointer;'
-      if (activePath===node.path) { btn.style.background='var(--bga)'; btn.style.color='var(--tx)' }
 
       btn.onclick = () => {
         Store._data.docPath = node.path; Store.save()
@@ -517,6 +526,14 @@ const App = {
         inp.addEventListener('mousedown', e => e.stopPropagation())
       })
 
+      // Context menu for files
+      btn.addEventListener('contextmenu', e => {
+        e.preventDefault(); e.stopPropagation()
+        this._showSidebarMenu(e.clientX, e.clientY, [
+          { label: 'Delete Document', danger: true, action: () => this._deleteDoc(node.path) }
+        ])
+      })
+
       container.appendChild(btn)
     } else {
       const btn = document.createElement('button')
@@ -526,6 +543,53 @@ const App = {
       node.children.forEach(c => this._docNode(c, sub, activePath, project))
       container.appendChild(sub)
       btn.onclick = () => sub.classList.toggle('hidden')
+    }
+  },
+
+  _showSidebarMenu(x, y, items) {
+    // Reuse the existing context menu element if it exists (from Canvas)
+    let menu = document.getElementById('canvas-ctx')
+    if (!menu) {
+      menu = document.createElement('div')
+      menu.id = 'canvas-ctx'; menu.className = 'ctx-menu hidden'
+      document.body.appendChild(menu)
+    }
+    menu.innerHTML = ''
+    items.forEach(item => {
+      const b = document.createElement('button')
+      b.className = 'ctx-item' + (item.danger ? ' ctx-danger' : '')
+      b.innerHTML = `<span>${item.label}</span>`
+      b.onclick = () => { menu.classList.add('hidden'); item.action() }
+      menu.appendChild(b)
+    })
+    menu.style.left = x + 'px'; menu.style.top = y + 'px'
+    menu.classList.remove('hidden')
+    
+    const close = () => { menu.classList.add('hidden'); document.removeEventListener('mousedown', close) }
+    setTimeout(() => document.addEventListener('mousedown', close), 10)
+  },
+
+  async _deleteDoc(path) {
+    if (!confirm('Are you sure you want to delete this document? This cannot be undone.')) return
+    await api.fs.delete(path)
+    if (Store.get('docPath') === path) {
+      Store.set('docPath', null)
+    } else {
+      this.render() // Force refresh sidebar
+    }
+  },
+
+  async _deleteBoard(projectDir, file) {
+    if (file === 'master.json') return alert('The Master board cannot be deleted.')
+    if (!confirm('Delete this board? All nodes and arrows on this specific board will be lost.')) return
+    await api.fs.delete(`${projectDir}/boards/${file}`)
+    if (Store.get('boardFile') === file) {
+      Store._data.boardFile = 'master.json'
+      Store._data.boardStack = []
+      Store.save()
+      this.render()
+    } else {
+      this.render()
     }
   },
 
