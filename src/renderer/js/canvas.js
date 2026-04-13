@@ -64,7 +64,7 @@ const Canvas = {
     this._zoom = 1; this._pan = { x: 80, y: 80 }
     this._mode = 'select'; this._drag = null; this._resize = null; this._marquee = null
     this._selected = new Set(); this._connecting = null; this._panning = false
-    this._history = []; this._histIdx = -1; this._previewGroup = null
+    this._history = []; this._histIdx = -1; this._previewGroup = null; this._textDraw = null
 
     container.innerHTML = `
       <div class="canvas-wrap">
@@ -114,8 +114,8 @@ const Canvas = {
 
     const sub = document.createElement('button'); sub.className='canvas-tool'; sub.textContent='⊞ Sub-board'; sub.onclick=()=>this._addSubBoard(); tb.appendChild(sub)
 
-    const txtBtn = document.createElement('button'); txtBtn.className='canvas-tool'; txtBtn.textContent='T Text'; txtBtn.title='Add freeform text'
-    txtBtn.onclick=()=>this._addText(); tb.appendChild(txtBtn)
+    const txtBtn = document.createElement('button'); txtBtn.className='canvas-tool canvas-mode-btn'; txtBtn.id='cvmode-text'; txtBtn.textContent='T Text'; txtBtn.title='Text tool  T'
+    txtBtn.onclick=()=>this._setMode('text'); tb.appendChild(txtBtn)
     this._sep(tb)
 
     for (const [l,t,fn] of [['↩','Undo ⌘Z',()=>this._undo()],['↪','Redo ⌘⇧Z',()=>this._redo()]]) {
@@ -140,8 +140,10 @@ const Canvas = {
     this._mode = m
     if (this._connecting) { document.querySelectorAll('.anchor-active').forEach(a=>{a.classList.remove('anchor-active');a.style.opacity='0'}); this._connecting=null }
     this._refreshModeUI()
+    this._area.style.cursor = m === 'text' ? 'crosshair' : 'default'
     document.getElementById('cv-hint').textContent = m==='select'
       ? 'Scroll to pan · Pinch to zoom · Drag canvas to marquee-select · Shift+click for multi · Right-click for menu · ⌘G to group'
+      : m === 'text' ? 'Click to place a text field · Click and drag to draw its size'
       : 'Hover a pin → click an anchor → click another anchor · Esc to cancel'
   },
 
@@ -173,6 +175,18 @@ const Canvas = {
       if (e.target!==this._area&&e.target!==this._world) return
       // Cancel connect
       if (this._mode==='connect'&&this._connecting) { document.querySelectorAll('.anchor-active').forEach(a=>{a.classList.remove('anchor-active');a.style.opacity='0'}); this._connecting=null; return }
+
+      // Text draw mode — start drawing a text box
+      if (this._mode==='text') {
+        const r=this._area.getBoundingClientRect()
+        this._textDraw = { startX: e.clientX-r.left, startY: e.clientY-r.top, clientX: e.clientX, clientY: e.clientY }
+        // Show a ghost rect
+        const ghost = document.getElementById('cv-marquee')
+        ghost.style.cssText=`left:${this._textDraw.startX}px;top:${this._textDraw.startY}px;width:0;height:0;border-color:var(--accent);`
+        ghost.classList.remove('hidden')
+        return
+      }
+
       // Start marquee
       this._clearSelection()
       const r=this._area.getBoundingClientRect()
@@ -183,6 +197,52 @@ const Canvas = {
 
     window.addEventListener('mousemove', e => {
       if (this._panning) { this._pan.x+=e.clientX-this._lastMouse.x; this._pan.y+=e.clientY-this._lastMouse.y; this._lastMouse={x:e.clientX,y:e.clientY}; this._applyTransform(); return }
+
+      // Finalize text draw
+      if (this._textDraw) {
+        const r=this._area.getBoundingClientRect()
+        const cx=e.clientX-r.left, cy=e.clientY-r.top
+        const rawW=Math.abs(cx-this._textDraw.startX), rawH=Math.abs(cy-this._textDraw.startY)
+        const ghost=document.getElementById('cv-marquee'); ghost?.classList.add('hidden')
+
+        const wasDrag = rawW > 8 || rawH > 8
+
+        // Convert screen coords to world coords
+        let wx, wy, ww, wh
+        if (wasDrag) {
+          const sx = Math.min(cx, this._textDraw.startX)
+          const sy = Math.min(cy, this._textDraw.startY)
+          wx = (sx - this._pan.x) / this._zoom
+          wy = (sy - this._pan.y) / this._zoom
+          ww = Math.round(rawW / this._zoom)
+          wh = Math.round(rawH / this._zoom)
+        } else {
+          // Just a click — place default-sized box at click point
+          wx = (this._textDraw.startX - this._pan.x) / this._zoom
+          wy = (this._textDraw.startY - this._pan.y) / this._zoom
+          ww = 220; wh = 60
+        }
+
+        const node = { id:crypto.randomUUID(), type:'text', x:Math.round(wx), y:Math.round(wy), width:Math.max(60,ww), height:Math.max(30,wh), text:'', fontSize:16, color:'var(--tx)' }
+        this._board.nodes.push(node)
+        this._renderNode(node)
+        this._snapshot(); this._persist()
+
+        // Immediately focus the text content for typing
+        requestAnimationFrame(() => {
+          const el = document.getElementById(`pin-${node.id}`)
+          const content = el?.querySelector('.pin-text-content')
+          if (content) {
+            content.contentEditable = 'true'
+            content.style.cursor = 'text'
+            content.focus()
+          }
+        })
+
+        this._textDraw = null
+        this._setMode('select') // return to select after placing
+        return
+      }
 
       if (this._drag) {
         const r=this._area.getBoundingClientRect()
@@ -254,6 +314,17 @@ const Canvas = {
         return
       }
 
+      // Text draw ghost
+      if (this._textDraw) {
+        const r=this._area.getBoundingClientRect()
+        const cx=e.clientX-r.left, cy=e.clientY-r.top
+        const x=Math.min(cx,this._textDraw.startX), y=Math.min(cy,this._textDraw.startY)
+        const w=Math.abs(cx-this._textDraw.startX), h=Math.abs(cy-this._textDraw.startY)
+        const ghost=document.getElementById('cv-marquee')
+        if(ghost) ghost.style.cssText=`position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;border-color:var(--accent);`
+        return
+      }
+
       if (this._marquee) {
         const r=this._area.getBoundingClientRect(), cx=e.clientX-r.left, cy=e.clientY-r.top
         const x=Math.min(cx,this._marquee.startX), y=Math.min(cy,this._marquee.startY)
@@ -276,6 +347,52 @@ const Canvas = {
       this._board?.nodes?.filter(g => g.type === 'group').forEach(g => this._restoreGroupDOM(g))
 
       if (this._panning) { this._panning = false; return }
+
+      // Finalize text draw
+      if (this._textDraw) {
+        const r=this._area.getBoundingClientRect()
+        const cx=e.clientX-r.left, cy=e.clientY-r.top
+        const rawW=Math.abs(cx-this._textDraw.startX), rawH=Math.abs(cy-this._textDraw.startY)
+        const ghost=document.getElementById('cv-marquee'); ghost?.classList.add('hidden')
+
+        const wasDrag = rawW > 8 || rawH > 8
+
+        // Convert screen coords to world coords
+        let wx, wy, ww, wh
+        if (wasDrag) {
+          const sx = Math.min(cx, this._textDraw.startX)
+          const sy = Math.min(cy, this._textDraw.startY)
+          wx = (sx - this._pan.x) / this._zoom
+          wy = (sy - this._pan.y) / this._zoom
+          ww = Math.round(rawW / this._zoom)
+          wh = Math.round(rawH / this._zoom)
+        } else {
+          // Just a click — place default-sized box at click point
+          wx = (this._textDraw.startX - this._pan.x) / this._zoom
+          wy = (this._textDraw.startY - this._pan.y) / this._zoom
+          ww = 220; wh = 60
+        }
+
+        const node = { id:crypto.randomUUID(), type:'text', x:Math.round(wx), y:Math.round(wy), width:Math.max(60,ww), height:Math.max(30,wh), text:'', fontSize:16, color:'var(--tx)' }
+        this._board.nodes.push(node)
+        this._renderNode(node)
+        this._snapshot(); this._persist()
+
+        // Immediately focus the text content for typing
+        requestAnimationFrame(() => {
+          const el = document.getElementById(`pin-${node.id}`)
+          const content = el?.querySelector('.pin-text-content')
+          if (content) {
+            content.contentEditable = 'true'
+            content.style.cursor = 'text'
+            content.focus()
+          }
+        })
+
+        this._textDraw = null
+        this._setMode('select') // return to select after placing
+        return
+      }
 
       if (this._drag) {
         if (this._drag.type === 'node') {
@@ -317,6 +434,17 @@ const Canvas = {
 
       this._drag = null
       this._resize = null
+      // Text draw ghost
+      if (this._textDraw) {
+        const r=this._area.getBoundingClientRect()
+        const cx=e.clientX-r.left, cy=e.clientY-r.top
+        const x=Math.min(cx,this._textDraw.startX), y=Math.min(cy,this._textDraw.startY)
+        const w=Math.abs(cx-this._textDraw.startX), h=Math.abs(cy-this._textDraw.startY)
+        const ghost=document.getElementById('cv-marquee')
+        if(ghost) ghost.style.cssText=`position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;border-color:var(--accent);`
+        return
+      }
+
       if (this._marquee) { this._marquee = null; document.getElementById('cv-marquee')?.classList.add('hidden') }
     })
 
@@ -345,6 +473,7 @@ const Canvas = {
       const mod=e.metaKey||e.ctrlKey
       if (!mod&&e.key==='v') this._setMode('select')
       if (!mod&&e.key==='c') this._setMode('connect')
+      if (!mod&&e.key==='t') this._setMode('text')
       if (e.key==='Escape'){this._setMode('select');this._clearSelection()}
       if (mod&&e.key.toLowerCase()==='g'){e.preventDefault();this._groupSelected()}
       if (mod&&e.key.toLowerCase()==='d'&&this._selected.size===1){e.preventDefault();const n=this._board.nodes.find(n=>n.id===[...this._selected][0]);if(n)this._duplicateNode(n)}
