@@ -163,6 +163,25 @@ const Canvas = {
   // ── Events ────────────────────────────────────────────────────────────────
 
   _bindEvents() {
+    // Text draw — window capture so stopPropagation on pins can't block it
+    window.addEventListener('mousedown', e => {
+      if (e.button !== 0) return
+      if (this._mode !== 'text') return
+      const r = this._area.getBoundingClientRect()
+      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return
+      e.stopPropagation()  // prevent pin drag starting
+      const sx = e.clientX - r.left
+      const sy = e.clientY - r.top
+      this._textDraw = { startX:sx, startY:sy }
+      let ghost = document.getElementById('cv-text-ghost')
+      if (!ghost) {
+        ghost = document.createElement('div'); ghost.id='cv-text-ghost'
+        ghost.style.cssText = 'position:absolute;pointer-events:none;z-index:50;box-sizing:border-box;border:1.5px dashed rgba(201,169,110,0.9);background:rgba(201,169,110,0.07);border-radius:3px;display:none;'
+        this._area.appendChild(ghost)
+      }
+      ghost.style.left=sx+'px'; ghost.style.top=sy+'px'; ghost.style.width='0px'; ghost.style.height='0px'; ghost.style.display='block'
+    }, true)  // capture = true
+
     // Trackpad: scroll = pan, pinch (ctrl+wheel) = zoom
     this._area.addEventListener('wheel', e => {
       e.preventDefault()
@@ -178,22 +197,6 @@ const Canvas = {
     this._area.addEventListener('mousedown', e => {
       if (e.button===2) return
       if (e.button===1||(e.button===0&&e.altKey)) { this._panning=true; this._lastMouse={x:e.clientX,y:e.clientY}; this._area.style.cursor='grabbing'; e.preventDefault(); return }
-      // Text draw mode — must come BEFORE target filter so it works anywhere on canvas
-      if (this._mode==='text') {
-        const r=this._area.getBoundingClientRect()
-        const sx=e.clientX-r.left, sy=e.clientY-r.top
-        this._textDraw = { startX:sx, startY:sy, moved:false }
-        // Ghost rect — inline element, no transitions
-        let ghost = document.getElementById('cv-text-ghost')
-        if (!ghost) {
-          ghost = document.createElement('div'); ghost.id='cv-text-ghost'
-          ghost.style.cssText='position:absolute;pointer-events:none;z-index:50;box-sizing:border-box;border:1.5px dashed var(--accent);background:rgba(201,169,110,0.06);border-radius:3px;display:none;'
-          this._area.appendChild(ghost)
-        }
-        ghost.style.left=sx+'px'; ghost.style.top=sy+'px'; ghost.style.width='0'; ghost.style.height='0'; ghost.style.display='block'
-        return
-      }
-
       // For all other modes, only react to clicks on bare canvas background
       if (e.target!==this._area&&e.target!==this._world) return
       // Cancel connect
@@ -276,8 +279,27 @@ const Canvas = {
             }
           }
         } else {
-          const node=this._board.nodes.find(n=>n.id===this._drag.id)
-          if (node) { node.x=Math.round(wx-this._drag.offX); node.y=Math.round(wy-this._drag.offY); const el=document.getElementById(`pin-${node.id}`); if(el){el.style.left=node.x+'px';el.style.top=node.y+'px'} }
+          const node = this._board.nodes.find(n => n.id === this._drag.id)
+          if (node) {
+            const newX = Math.round(wx - this._drag.offX)
+            const newY = Math.round(wy - this._drag.offY)
+            const dx = newX - node.x
+            const dy = newY - node.y
+            node.x = newX; node.y = newY
+            const el = document.getElementById(`pin-${node.id}`)
+            if (el) { el.style.left = node.x+'px'; el.style.top = node.y+'px' }
+            // Move all other selected nodes by the same delta
+            if (dx !== 0 || dy !== 0) {
+              for (const id of this._selected) {
+                if (id === node.id) continue
+                const sn = this._board.nodes.find(n => n.id === id)
+                if (!sn) continue
+                sn.x += dx; sn.y += dy
+                const sel = document.getElementById(`pin-${sn.id}`)
+                if (sel) { sel.style.left = sn.x+'px'; sel.style.top = sn.y+'px' }
+              }
+            }
+          }
         }
         this._renderArrows()
         // Live-preview group resize while dragging a node
@@ -1058,14 +1080,13 @@ const Canvas = {
 
     // Auto-grow: keep el height in sync with content so border never clips
     const syncHeight = () => {
-      const needed = content.scrollHeight + 20 // 20px = top+bottom padding
-      if (needed > (n.height || 60)) {
-        n.height = needed
-        el.style.minHeight = needed + 'px'
-      }
+      // Allow natural shrink: temporarily remove minHeight to measure true content height
+      el.style.minHeight = '30px'
+      const needed = Math.max(30, content.scrollHeight + 16)
+      n.height = needed
+      el.style.minHeight = needed + 'px'
     }
-    content.addEventListener('input', syncHeight)
-    // Also sync on focus so existing content is measured correctly
+    content.addEventListener('input', () => requestAnimationFrame(syncHeight))
     content.addEventListener('focus', () => requestAnimationFrame(syncHeight))
     content.addEventListener('mouseup', () => setTimeout(positionFmt, 10))
     content.addEventListener('keyup',  () => setTimeout(positionFmt, 10))
