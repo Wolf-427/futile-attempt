@@ -162,11 +162,6 @@ const App = {
         const id = card.dataset.id
         // Update last opened timestamp
         Store._data.projects = Store.get('projects').map(p => p.id === id ? { ...p, updatedAt: Date.now() } : p)
-        
-        // Reset session state for the new project context
-        Store._data.docPath = null
-        Store._data.boardFile = 'master.json'
-        Store._data.boardStack = []
         Store.save()
         Store.set('activeId', id)
       })
@@ -177,10 +172,6 @@ const App = {
       btn.addEventListener('click', async e => {
         e.stopPropagation()
         const id = btn.dataset.id
-        const project = Store.get('projects').find(p => p.id === id)
-        
-        if (!await this._confirm(`Remove "${project?.name || 'this project'}"?`, 'This removes the project from the recent list. Your files remain safe on disk.')) return
-
         Store._data.projects = Store.get('projects').filter(p => p.id !== id)
         Store.save()
         // Remove card from DOM without full re-render
@@ -278,9 +269,6 @@ const App = {
       if (!folder) { btn.textContent = 'Choose folder →'; btn.disabled = false; return }
       const p = await Project.create(name, folder)
       Store._data.projects = [...Store.get('projects'), { id: p.id, name: p.name, dir: p.dir, updatedAt: Date.now() }]
-      Store._data.docPath = null
-      Store._data.boardFile = 'master.json'
-      Store._data.boardStack = []
       Store.save()
       Store.set('activeId', p.id)
     } catch (e) {
@@ -295,12 +283,6 @@ const App = {
       const folder = await api.dialog.folder()
       if (!folder) return
       const p = await Project.open(folder)
-      
-      // Always reset session state when opening a project
-      Store._data.docPath = null
-      Store._data.boardFile = 'master.json'
-      Store._data.boardStack = []
-
       const existing = Store.get('projects').find(x => x.dir === folder)
       if (existing) { Store.set('activeId', existing.id); return }
       Store._data.projects = [...Store.get('projects'), { id: p.id, name: p.name, dir: p.dir, updatedAt: Date.now() }]
@@ -353,13 +335,7 @@ const App = {
       })
       document.getElementById('toggle-sidebar').addEventListener('click', () => Store.set('sidebar', !Store.get('sidebar')))
       document.getElementById('btn-home').addEventListener('click', () => {
-        // Clear active session when returning to splash
-        Store._data.activeId = null
-        Store._data.boardStack = []
-        Store._data.docPath = null
-        Store._data.boardFile = 'master.json'
-        Store._data.view = 'editor'
-        
+        Store._data.activeId = null; Store._data.boardStack = []; Store._data.view = 'editor'
         Store.save(); this.render()
       })
     }
@@ -631,6 +607,7 @@ const App = {
       btn.draggable = true
       btn.ondragstart = (e) => {
         e.dataTransfer.setData('text/doc-path', node.path)
+        e.dataTransfer.setData('text/doc-name', node.name)
         e.dataTransfer.effectAllowed = 'move'
         btn.classList.add('dragging')
       }
@@ -761,40 +738,8 @@ const App = {
     setTimeout(() => document.addEventListener('mousedown', close), 10)
   },
 
-  _confirm(message, subtext = '') {
-    return new Promise(resolve => {
-      const overlay = document.createElement('div'); overlay.className = 'modal-overlay'
-      overlay.innerHTML = `
-        <div class="modal" style="width: 320px; animation: modal-in 0.15s ease-out;">
-          <div class="modal-body" style="padding: 24px; text-align: center;">
-            <div style="font-size: 14px; color: var(--tx); margin-bottom: 8px; font-weight: 500;">${message}</div>
-            ${subtext ? `<div style="font-size: 12px; color: var(--tx3); line-height: 1.5;">${subtext}</div>` : ''}
-          </div>
-          <div class="modal-footer" style="padding: 12px 16px; gap: 8px; justify-content: center; background: var(--bg1);">
-            <button class="btn-sm" id="confirm-cancel" style="flex: 1;">Cancel</button>
-            <button class="btn-sm primary" id="confirm-ok" style="flex: 1;">Confirm</button>
-          </div>
-        </div>
-      `
-      document.body.appendChild(overlay)
-      const finish = (val) => {
-        document.removeEventListener('keydown', onKey)
-        overlay.remove()
-        resolve(val)
-      }
-      const onKey = (e) => {
-        if (e.key === 'Escape') finish(false)
-        if (e.key === 'Enter') finish(true)
-      }
-      overlay.querySelector('#confirm-cancel').onclick = () => finish(false)
-      overlay.querySelector('#confirm-ok').onclick = () => finish(true)
-      overlay.onclick = (e) => { if (e.target === overlay) finish(false) }
-      document.addEventListener('keydown', onKey)
-    })
-  },
-
   async _deleteDoc(path) {
-    if (!await this._confirm('Delete this document?', 'This action cannot be undone and the file will be removed from disk.')) return
+    if (!confirm('Are you sure you want to delete this document? This cannot be undone.')) return
     await api.fs.delete(path)
 
     const project = Store.project
@@ -816,7 +761,7 @@ const App = {
 
   async _deleteBoard(projectDir, file) {
     if (file === 'master.json') return alert('The Master board cannot be deleted.')
-    if (!await this._confirm('Delete this board?', 'All nodes and arrows on this specific board will be lost forever.')) return
+    if (!confirm('Delete this board? All nodes and arrows on this specific board will be lost.')) return
     await api.fs.delete(`${projectDir}/boards/${file}`)
     if (Store.get('boardFile') === file) {
       Store._data.boardFile = 'master.json'
@@ -871,8 +816,7 @@ const App = {
 
   renderEditor(container, project) {
     const docPath = Store.get('docPath')
-    // Ensure the document path actually belongs to the current project directory
-    if (!docPath || !docPath.startsWith(project.dir)) {
+    if (!docPath) {
       container.innerHTML = '<div class="editor-empty">Select a document from the sidebar</div>'
       container.dataset.path = ''
       return

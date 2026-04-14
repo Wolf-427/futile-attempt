@@ -523,11 +523,19 @@ const Canvas = {
       if (e.dataTransfer.types.includes('text/board-file') || e.dataTransfer.types.includes('Files') || e.dataTransfer.types.includes('text/uri-list')) e.preventDefault() 
     })
     this._area.addEventListener('drop', async e => {
-      const bf = e.dataTransfer.getData('text/board-file'), pos = { x: e.clientX, y: e.clientY }
+      const bf = e.dataTransfer.getData('text/board-file')
+      const dp = e.dataTransfer.getData('text/doc-path')
+      const pos = { x: e.clientX, y: e.clientY }
+      
       if (bf) { 
         e.preventDefault(); const {wx, wy} = this._sw(pos.x, pos.y)
         const n={id:crypto.randomUUID(),type:'subboard',x:Math.round(wx-80),y:Math.round(wy-70),width:160,file:bf,name:e.dataTransfer.getData('text/board-name'),cover:null}; 
         this._board.nodes.push(n); this._renderNode(n); this._snapshot(); this._persist(); return 
+      }
+      if (dp) {
+        e.preventDefault(); const {wx, wy} = this._sw(pos.x, pos.y)
+        const n={id:crypto.randomUUID(),type:'doclink',x:Math.round(wx-80),y:Math.round(wy-20),width:180,path:dp,name:e.dataTransfer.getData('text/doc-name')};
+        this._board.nodes.push(n); this._renderNode(n); this._snapshot(); this._persist(); return
       }
       if (e.dataTransfer.files?.length) {
         e.preventDefault(); for (const f of e.dataTransfer.files) if (f.type.startsWith('image/')) this._handleImageSource(f, pos)
@@ -802,6 +810,7 @@ const Canvas = {
       ;['yellow','blue','green','purple'].filter(c=>c!==node.color).forEach(c=>items.push({label:`Change to ${c}`,action:()=>{node.color=c;this._renderNode(node);this._snapshot();this._persist()}}))
       items.push('---')
     }
+    if (node.type==='doclink') { items.push({label:'Open Document', action:()=>{Store.set('docPath', node.path); Store.set('view', 'editor')}}); items.push({label:'Duplicate', action:()=>this._duplicateNode(node)}); items.push('---') }
     if (node.type==='subboard') { items.push({label:'Open board',action:()=>App.openBoard(node.file)}); items.push({label:'Duplicate',action:()=>this._duplicateNode(node)}); items.push('---') }
     if (node.type==='image') { items.push({label:'Duplicate',action:()=>this._duplicateNode(node)}); items.push('---') }
     if (node.type==='group') { items.push({label:'Rename group',action:()=>{this._prompt('Group name:',node.name).then(v=>{if(v){node.name=v;this._renderNode(node);this._persist()}})}}); items.push('---') }
@@ -866,7 +875,8 @@ const Canvas = {
   _toScreen(wx,wy) { return {x:wx*this._zoom+this._pan.x, y:wy*this._zoom+this._pan.y} },
 
   _anchorPos(node, side) {
-    const w = node.width || 220, h = node.height || (node.type === 'text' ? 60 : 160)
+    const w = node.width || (node.type === 'doclink' ? 180 : 220)
+    const h = node.height || (node.type === 'text' ? 60 : (node.type === 'doclink' ? 40 : 160))
     if (side==='top')    return {x:node.x+w/2, y:node.y}
     if (side==='right')  return {x:node.x+w,   y:node.y+h/2}
     if (side==='bottom') return {x:node.x+w/2, y:node.y+h}
@@ -875,8 +885,12 @@ const Canvas = {
   },
 
   _bestAnchorPair(fn, tn) {
-    const fCx=fn.x+(fn.width||220)/2,  fCy=fn.y+(fn.height||160)/2
-    const tCx=tn.x+(tn.width||220)/2,  tCy=tn.y+(tn.height||160)/2
+    const fW = fn.width || (fn.type === 'doclink' ? 180 : 220)
+    const fH = fn.height || (fn.type === 'text' ? 60 : (fn.type === 'doclink' ? 40 : 160))
+    const tW = tn.width || (tn.type === 'doclink' ? 180 : 220)
+    const tH = tn.height || (tn.type === 'text' ? 60 : (tn.type === 'doclink' ? 40 : 160))
+    const fCx = fn.x + fW/2, fCy = fn.y + fH/2
+    const tCx = tn.x + tW/2, tCy = tn.y + tH/2
     const dx=tCx-fCx, dy=tCy-fCy
     if (Math.abs(dx) >= Math.abs(dy)) return dx>=0 ? ['right','left'] : ['left','right']
     return dy>=0 ? ['bottom','top'] : ['top','bottom']
@@ -1154,6 +1168,7 @@ const Canvas = {
     if(n.type==='image')    return this._makeImage(n)
     if(n.type==='subboard') return this._makeSub(n)
     if(n.type==='text')     return this._makeText(n)
+    if(n.type==='doclink')  return this._makeDocLink(n)
     return null
   },
 
@@ -1221,6 +1236,39 @@ const Canvas = {
     el.appendChild(this._resizeHandle(n))
     el.addEventListener('mousedown', e => this._startGroupDrag(e, n))
     el.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); this._showNodeMenu(e.clientX, e.clientY, n) })
+    return el
+  },
+
+  _makeDocLink(n) {
+    const el = document.createElement('div'); el.id = `pin-${n.id}`; el.className = 'pin doclink'
+    el.style.cssText = `left:${n.x}px;top:${n.y}px;width:${n.width||180}px;position:absolute;z-index:2;background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r);padding:8px 12px;cursor:move;display:flex;align-items:center;gap:8px;box-shadow:0 2px 8px rgba(0,0,0,0.2);`
+
+    const icon = document.createElement('span'); icon.textContent = '📄'; icon.style.opacity = '0.7'
+    const lbl = document.createElement('span'); lbl.textContent = n.name; lbl.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:var(--tx2);'
+
+    el.appendChild(icon); el.appendChild(lbl); el.appendChild(this._xBtn(n))
+
+    el.addEventListener('dblclick', e => {
+      e.stopPropagation()
+      Store.set('docPath', n.path)
+      Store.set('view', 'editor')
+    })
+
+    this._addAnchors(el, n)
+    el.addEventListener('mousedown', e => this._startNodeDrag(e, n))
+    el.addEventListener('contextmenu', e => {
+      e.preventDefault(); e.stopPropagation()
+      if(!this._selected.has(n.id)){this._clearSelection();this._selectNode(n.id)}
+      this._showNodeMenu(e.clientX, e.clientY, n)
+    })
+    const ro = new ResizeObserver(() => {
+      const w = el.offsetWidth, h = el.offsetHeight
+      if (w !== n.width || h !== n.height) {
+        n.width = w; n.height = h
+        this._renderArrows(); this._persistDebounced()
+      }
+    })
+    ro.observe(el); el._cleanup = () => ro.disconnect()
     return el
   },
 
