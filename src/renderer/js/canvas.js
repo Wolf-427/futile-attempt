@@ -343,9 +343,18 @@ const Canvas = {
             }
           }
 
-          node.width = nw; node.height = nh
           const el=document.getElementById(`pin-${node.id}`)
-          if(el){ el.style.width=node.width+'px'; el.style.height=node.height+'px' }
+          if(el){ 
+          el.style.width=nw+'px'
+          if (node.type === 'text') el.style.minHeight = nh + 'px'
+          else el.style.height=nh+'px'
+
+          // Sync back the ACTUAL physical size to keep arrows attached to visible borders
+          node.width = el.offsetWidth
+          node.height = el.offsetHeight
+        } else {
+          node.width = nw; node.height = nh
+          }
           this._renderArrows() 
         }
         return
@@ -857,7 +866,7 @@ const Canvas = {
   _toScreen(wx,wy) { return {x:wx*this._zoom+this._pan.x, y:wy*this._zoom+this._pan.y} },
 
   _anchorPos(node, side) {
-    const w=node.width||220, h=node.height||160
+    const w = node.width || 220, h = node.height || (node.type === 'text' ? 60 : 160)
     if (side==='top')    return {x:node.x+w/2, y:node.y}
     if (side==='right')  return {x:node.x+w,   y:node.y+h/2}
     if (side==='bottom') return {x:node.x+w/2, y:node.y+h}
@@ -1218,7 +1227,7 @@ const Canvas = {
   _makeText(n) {
     const el = document.createElement('div')
     el.id = `pin-${n.id}`; el.className = 'pin pin-text'
-    el.style.cssText = `left:${n.x}px;top:${n.y}px;width:${n.width||220}px;min-height:${n.height||60}px;position:absolute;z-index:2;display:flex;flex-direction:column;`
+    el.style.cssText = `left:${n.x}px;top:${n.y}px;width:${n.width||220}px;min-height:${n.height||60}px;height:auto;position:absolute;z-index:2;display:flex;flex-direction:column;`
 
     const content = document.createElement('div')
     content.className = 'pin-text-content'
@@ -1340,8 +1349,19 @@ const Canvas = {
     })
     el.appendChild(this._resizeHandle(n))
 
-    // Clean up floating fmt bar when node is removed
-    el._cleanup = () => fmt.remove()
+    // Sync actual rendered size (including text expansion) back to data model
+    const ro = new ResizeObserver(() => {
+      const w = el.offsetWidth, h = el.offsetHeight
+      if (w !== n.width || h !== n.height) {
+        n.width = w; n.height = h
+        this._renderArrows()
+        this._persistDebounced()
+      }
+    })
+    ro.observe(el)
+
+    // Clean up observers and UI when node is removed
+    el._cleanup = () => { fmt.remove(); ro.disconnect() }
 
     return el
   },

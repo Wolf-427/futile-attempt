@@ -2,10 +2,34 @@ const Settings = {
   async mount(container, project = null) {
     const version = await api.app.version().catch(() => '0.1.0')
     const token   = await api.store.get('gh-token').catch(() => null)
+    const theme = Store.get('theme')
+    const paperTheme = Store.get('paperTheme')
 
     container.innerHTML = `
       <div class="settings">
         <h2>Settings</h2>
+
+        <div class="settings-section">
+          <div class="settings-title">Appearance</div>
+          <div class="settings-row" style="margin-bottom:12px">
+            <div style="flex:1"><div class="settings-note" style="margin:0">Application Theme</div></div>
+            <select class="settings-input" id="setting-theme" style="max-width:120px">
+              <option value="dark" ${theme==='dark'?'selected':''}>Dark</option>
+              <option value="light" ${theme==='light'?'selected':''}>Light</option>
+            </select>
+          </div>
+          <div class="settings-row">
+            <div style="flex:1">
+              <div class="settings-note" style="margin:0">Editor Paper</div>
+              <div style="font-size:10px;color:var(--tx3)">The writing area background</div>
+            </div>
+            <select class="settings-input" id="setting-paper" style="max-width:120px">
+              <option value="auto" ${paperTheme==='auto'?'selected':''}>Follow Theme</option>
+              <option value="dark" ${paperTheme==='dark'?'selected':''}>Always Dark</option>
+              <option value="light" ${paperTheme==='light'?'selected':''}>Always Light</option>
+            </select>
+          </div>
+        </div>
 
         <div class="settings-section">
           <div class="settings-title">Current version</div>
@@ -47,6 +71,13 @@ const Settings = {
       document.getElementById('clear-token').addEventListener('click', async () => { await api.store.del('gh-token'); location.reload() })
     })
     document.getElementById('clear-token')?.addEventListener('click', async () => { await api.store.del('gh-token'); location.reload() })
+
+    document.getElementById('setting-theme')?.addEventListener('change', (e) => {
+      Store.set('theme', e.target.value)
+    })
+    document.getElementById('setting-paper')?.addEventListener('change', (e) => {
+      Store.set('paperTheme', e.target.value)
+    })
 
     document.getElementById('check-update').addEventListener('click', async () => {
       const token = await api.store.get('gh-token')

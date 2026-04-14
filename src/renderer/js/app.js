@@ -5,11 +5,13 @@ const App = {
     // Ensure the last active project still exists on disk before rendering
     await Store.verifyProject()
 
-    Store.sub(['activeId', 'view', 'sidebar', 'boardFile', 'boardStack', 'docPath'], () => {
+    Store.sub(['activeId', 'view', 'sidebar', 'boardFile', 'boardStack', 'docPath', 'theme', 'paperTheme'], () => {
+      this._applyTheme()
       this.render()
     })
 
     this._bindGlobalKeys()
+    this._applyTheme()
     this.render()
 
     // Dismiss the loading screen overlay defined in index.html/app.css
@@ -23,6 +25,10 @@ const App = {
         setTimeout(() => ls.remove(), 500)
       }, wait)
     }
+  },
+
+  _applyTheme() {
+    document.body.classList.toggle('light-mode', Store.get('theme') === 'light')
   },
 
   _bindGlobalKeys() {
@@ -45,7 +51,8 @@ const App = {
   render() {
     const s = Store.get()
     const root = document.getElementById('app')
-    if (!s.activeId || !Store.project) { this.renderSplash(root); return }
+    const isSplashSettings = !s.activeId && s.view === 'settings'
+    if (!s.activeId || !Store.project || isSplashSettings) { this.renderSplash(root); return }
     this.renderWorkspace(root, Store.project)
   },
 
@@ -54,6 +61,8 @@ const App = {
   async renderSplash(root) {
     const projects = Store.get('projects')
     const version = await api.app.version().catch(() => '0.3.0-alpha')
+    const view = Store.get('view')
+    const isSettings = view === 'settings'
 
     root.innerHTML = `
       <div class="splash">
@@ -61,7 +70,7 @@ const App = {
         <div class="splash-layout">
 
           <div class="splash-sidebar">
-            <div class="splash-logo">
+            <div class="splash-logo" style="cursor:pointer" id="splash-logo">
               <div class="splash-mark">S</div>
               <div class="splash-wordmark">Scriptum</div>
             </div>
@@ -78,7 +87,7 @@ const App = {
               <span class="splash-side-kbd">⌘O</span>
             </button>
             <div class="splash-divider" style="margin-top:auto"></div>
-            <button class="splash-side-btn" id="btn-settings">
+            <button class="splash-side-btn ${isSettings ? 'active-nav' : ''}" id="btn-settings">
               <span class="splash-side-icon">⚙</span>
               Settings
             </button>
@@ -93,8 +102,8 @@ const App = {
           </div>
 
           <div class="splash-main">
-            <div id="splash-settings-panel" class="hidden"></div>
-            <div id="splash-home" style="display:flex;flex-direction:column;flex:1;overflow:hidden">
+            <div id="splash-settings-panel" class="${isSettings ? '' : 'hidden'}"></div>
+            <div id="splash-home" style="display:${isSettings ? 'none' : 'flex'};flex-direction:column;flex:1;overflow:hidden">
               <div class="splash-welcome" id="splash-welcome"></div>
               <div class="splash-main-header">
                 <div class="splash-main-title">Recent projects</div>
@@ -126,9 +135,25 @@ const App = {
     `
 
     // Bind nav
-    document.getElementById('btn-new').onclick = () => this._showNewForm()
+    document.getElementById('splash-logo').onclick = () => Store.set('view', 'editor')
+    document.getElementById('btn-new').onclick = () => { Store.set('view', 'editor'); this._showNewForm() }
     document.getElementById('btn-open').onclick = () => this.openProject()
-    document.getElementById('btn-settings').onclick = () => this._showSplashSettings()
+    document.getElementById('btn-settings').onclick = () => Store.set('view', isSettings ? 'editor' : 'settings')
+
+    // If in settings, mount the panel
+    if (isSettings) {
+      const panel = document.getElementById('splash-settings-panel')
+      if (panel) {
+        panel.style.cssText = 'flex:1;overflow-y:auto;position:relative;'
+        Settings.mount(panel, null)
+        
+        const backBtn = document.createElement('button')
+        backBtn.className = 'splash-settings-back'
+        backBtn.textContent = '← Back to projects'
+        backBtn.onclick = () => Store.set('view', 'editor')
+        panel.insertBefore(backBtn, panel.firstChild)
+      }
+    }
 
     // Open project cards
     document.querySelectorAll('.splash-card').forEach(card => {
@@ -219,39 +244,7 @@ const App = {
       }
     })()
   },
-
-  _showSplashHome() {
-    document.getElementById('splash-settings-panel')?.classList.add('hidden')
-    const home = document.getElementById('splash-home')
-    if (home) { home.style.display = 'flex'; home.style.flexDirection = 'column'; home.style.flex = '1'; home.style.overflow = 'hidden' }
-    document.querySelectorAll('.splash-side-btn').forEach(b => b.classList.remove('active-nav'))
-  },
-
-  _showSplashSettings() {
-    const home = document.getElementById('splash-home')
-    if (home) home.style.display = 'none'
-    const panel = document.getElementById('splash-settings-panel')
-    if (!panel) return
-    panel.classList.remove('hidden')
-    panel.style.cssText = 'flex:1;overflow-y:auto;position:relative;'
-    document.querySelectorAll('.splash-side-btn').forEach(b => b.classList.remove('active-nav'))
-    document.getElementById('btn-settings')?.classList.add('active-nav')
-    Settings.mount(panel, null)
-    // Inject a close/back button at the top of settings
-    const backBtn = document.createElement('button')
-    backBtn.className = 'splash-settings-back'
-    backBtn.textContent = '← Back to projects'
-    backBtn.onclick = () => {
-      panel.classList.add('hidden')
-      const home = document.getElementById('splash-home')
-      if (home) { home.style.display = 'flex'; home.style.flexDirection = 'column'; home.style.flex = '1'; home.style.overflow = 'hidden' }
-      document.querySelectorAll('.splash-side-btn').forEach(b => b.classList.remove('active-nav'))
-    }
-    panel.insertBefore(backBtn, panel.firstChild)
-  },
-
   _showNewForm() {
-    this._showSplashHome()
     document.getElementById('splash-form').classList.remove('hidden')
     document.getElementById('project-name').focus()
     document.getElementById('btn-cancel').onclick = () => {
@@ -308,6 +301,12 @@ const App = {
       <div class="workspace">
         <div class="titlebar">
           <div class="titlebar-lights"></div>
+          <button class="titlebar-btn" id="btn-home" title="Return to home screen">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+              <polyline points="9 22 9 12 15 12 15 22"></polyline>
+            </svg>
+          </button>
           <button class="titlebar-btn" id="toggle-sidebar">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
               <rect x="1" y="3" width="14" height="10" rx="2" stroke="currentColor" stroke-width="1.2"/>
@@ -321,11 +320,6 @@ const App = {
             <button class="nav-btn ${s.view==='settings' ?'active':''}" data-view="settings">Settings</button>
           </div>
           <div class="spacer"></div>
-          <div class="git-area">
-            <span class="git-branch">⎇ ${s.git.branch}</span>
-            <span class="git-dot ${s.git.dirty?'dirty':'clean'}" title="${s.git.dirty?'Unsaved':'Saved'}"></span>
-            <button class="titlebar-close-project" id="close-project">Close</button>
-          </div>
         </div>
         <div class="body">
           <div id="sidebar-container" ${!s.sidebar||s.view==='settings'?'class="hidden"':''}></div>
@@ -340,10 +334,10 @@ const App = {
       })
     })
     document.getElementById('toggle-sidebar').addEventListener('click', () => Store.set('sidebar', !Store.get('sidebar')))
-    document.getElementById('close-project').addEventListener('click', () => {
+    document.getElementById('btn-home').addEventListener('click', () => {
       // Save last doc before closing
-      Store._data.activeId = null; Store._data.boardStack = []
-      Store.save(); Store._notify('activeId')
+      Store._data.activeId = null; Store._data.boardStack = []; Store._data.view = 'editor'
+      Store.save(); this.render()
     })
 
     if (s.sidebar && s.view !== 'settings') this.renderSidebar(project)
@@ -362,65 +356,7 @@ const App = {
     const docsHdr = document.createElement('div'); docsHdr.className = 'sidebar-header'
     const docsLbl = document.createElement('span'); docsLbl.className = 'sidebar-label'; docsLbl.textContent = 'Documents'
     const addDocBtn = document.createElement('button'); addDocBtn.className = 'sidebar-add'; addDocBtn.textContent = '+'
-    let addingDoc = false
-    addDocBtn.onclick = () => {
-      if (addingDoc) return; addingDoc = true
-
-      // Show name input
-      const inp = document.createElement('input')
-      inp.className = 'sidebar-new-input'; inp.placeholder = 'Name…'
-      docsSection.insertBefore(inp, docTree)
-      inp.focus()
-
-      const cancel = () => { inp.remove(); addingDoc = false }
-
-      const finish = async () => {
-        const name = inp.value.trim()
-        if (!name) { cancel(); return }
-
-        // Remove input first — but don't set addingDoc = false yet
-        inp.remove()
-
-        // Show template picker inline
-        const picker = document.createElement('div')
-        picker.className = 'template-picker'
-        const lbl = document.createElement('div'); lbl.className = 'template-label'; lbl.textContent = 'Choose template'
-        picker.appendChild(lbl)
-
-        const createDoc = async (tmpl) => {
-          picker.remove(); addingDoc = false
-          const p = `${project.dir}/documents/${name}.md`
-          const body = (tmpl?.content || '# {name}\n\n').replace(/\{name\}/g, name)
-          await api.fs.write(p, body)
-          Store._data.docPath = p; Store.save(); Store.set('view', 'editor')
-        }
-
-        Object.entries(Project.templates).forEach(([key, tmpl]) => {
-          const b = document.createElement('button'); b.className = 'template-btn'; b.textContent = tmpl.label
-          b.onclick = () => createDoc(tmpl)
-          picker.appendChild(b)
-        })
-
-        // Also allow pressing Escape to cancel picker
-        picker.addEventListener('keydown', e => { if (e.key === 'Escape') { picker.remove(); addingDoc = false } })
-
-        docsSection.insertBefore(picker, docTree)
-        // Auto-dismiss after 10s
-        setTimeout(() => { if (picker.parentNode) { picker.remove(); addingDoc = false } }, 10000)
-      }
-
-      inp.addEventListener('keydown', e => {
-        if (e.key === 'Enter') { e.preventDefault(); finish() }
-        if (e.key === 'Escape') cancel()
-      })
-      // Only cancel on blur if picker isn't showing yet
-      inp.addEventListener('blur', () => {
-        setTimeout(() => {
-          // If input is still in DOM somehow, or addingDoc still true and no picker exists
-          if (addingDoc && !docsSection.querySelector('.template-picker')) cancel()
-        }, 150)
-      })
-    }
+    addDocBtn.onclick = () => this._showNewDocModal(project)
     docsHdr.appendChild(docsLbl); docsHdr.appendChild(addDocBtn); docsSection.appendChild(docsHdr)
     const docTree = document.createElement('div'); docsSection.appendChild(docTree)
     container.appendChild(docsSection)
@@ -460,7 +396,7 @@ const App = {
 
     Project.readDocs(project.dir).then(docs => {
       if (!docs.length) { const e=document.createElement('span'); e.className='sidebar-empty'; e.textContent='No documents yet'; docTree.appendChild(e); return }
-      docs.forEach(n => this._docNode(n, docTree, s.docPath, project))
+      this._sortDocs(docs, project.docOrder).forEach(n => this._docNode(n, docTree, s.docPath, project))
     }).catch(e => console.error("Error reading docs:", e))
 
     Project.readBoards(project.dir).then(boards => {
@@ -532,6 +468,82 @@ const App = {
     })
   },
 
+  _showNewDocModal(project) {
+    const overlay = document.createElement('div'); overlay.className = 'modal-overlay'
+    overlay.innerHTML = `
+      <div class="modal">
+        <div class="modal-header">New Document</div>
+        <div class="modal-body">
+          <label class="modal-label">NAME</label>
+          <input type="text" id="doc-name" class="modal-input" placeholder="Untitled document..." autocomplete="off"/>
+          
+          <label class="modal-label" style="margin-top:20px">SELECT TEMPLATE</label>
+          <div class="template-grid" id="template-grid">
+            ${Object.entries(Project.templates).map(([key, tmpl]) => `
+              <div class="template-card" data-key="${key}">
+                <div class="template-card-icon">${key === 'blank' ? '📄' : '📝'}</div>
+                <div class="template-card-name">${tmpl.label}</div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-sm" id="modal-cancel">Cancel</button>
+          <button class="btn-sm primary" id="modal-create" disabled>Create Document</button>
+        </div>
+      </div>
+    `
+    document.body.appendChild(overlay)
+
+    const inp = overlay.querySelector('#doc-name')
+    const createBtn = overlay.querySelector('#modal-create')
+    let selectedTemplate = 'blank'
+
+    // Focus and selection
+    setTimeout(() => inp.focus(), 50)
+    overlay.querySelector(`[data-key="${selectedTemplate}"]`).classList.add('active')
+
+    const close = () => overlay.remove()
+    
+    const create = async () => {
+      const name = inp.value.trim()
+      if (!name) return
+      const tmpl = Project.templates[selectedTemplate]
+      const p = `${project.dir}/documents/${name}.md`
+      const body = (tmpl?.content || '# {name}\n\n').replace(/\{name\}/g, name)
+      
+      await api.fs.write(p, body)
+      if (project.docOrder) {
+        const newOrder = [...project.docOrder, p]
+        Store._data.projects = Store.get('projects').map(pj => 
+          pj.id === project.id ? { ...pj, docOrder: newOrder } : pj
+        )
+      }
+      Store.set('docPath', p)
+      Store.set('view', 'editor')
+      close()
+    }
+
+    inp.oninput = () => { createBtn.disabled = !inp.value.trim() }
+    inp.onkeydown = (e) => {
+      if (e.key === 'Enter') create()
+      if (e.key === 'Escape') close()
+    }
+
+    overlay.querySelectorAll('.template-card').forEach(card => {
+      card.onclick = () => {
+        overlay.querySelectorAll('.template-card').forEach(c => c.classList.remove('active'))
+        card.classList.add('active')
+        selectedTemplate = card.dataset.key
+      }
+    })
+
+    overlay.querySelector('#modal-cancel').onclick = close
+    createBtn.onclick = create
+    
+    overlay.onclick = (e) => { if (e.target === overlay) close() }
+  },
+
 
   _docNode(node, container, activePath, project) {
     if (node.type === 'file') {
@@ -539,6 +551,23 @@ const App = {
       const isCurrentDoc = activePath === node.path
       btn.className = 'sidebar-row' + (isCurrentDoc && Store.get('view') === 'editor' ? ' active' : '')
       btn.title = node.name
+
+      // Drag & Drop
+      btn.draggable = true
+      btn.ondragstart = (e) => {
+        e.dataTransfer.setData('text/doc-path', node.path)
+        e.dataTransfer.effectAllowed = 'move'
+        btn.classList.add('dragging')
+      }
+      btn.ondragend = () => btn.classList.remove('dragging')
+      btn.ondragover = (e) => { e.preventDefault(); btn.classList.add('drag-over') }
+      btn.ondragleave = () => btn.classList.remove('drag-over')
+      btn.ondrop = (e) => {
+        e.preventDefault()
+        btn.classList.remove('drag-over')
+        const draggedPath = e.dataTransfer.getData('text/doc-path')
+        if (draggedPath && draggedPath !== node.path) this._reorderDocs(project, draggedPath, node.path)
+      }
 
       // Document Label
       const lbl = document.createElement('span')
@@ -571,6 +600,18 @@ const App = {
             const newPath = `${dir}${newName}.md`
             try {
               await api.fs.rename(node.path, newPath)
+
+              // Update order to keep position
+              let order = project.docOrder
+              if (!order) {
+                const docs = await Project.readDocs(project.dir)
+                order = this._flattenPaths(docs)
+              }
+              const newOrder = order.map(p => p === node.path ? newPath : (p.startsWith(node.path + '/') ? p.replace(node.path, newPath) : p))
+              const projects = Store.get('projects').map(p => p.id === project.id ? { ...p, docOrder: newOrder } : p)
+              Store._data.projects = projects
+              Store.save()
+
               const wasActive = Store.get('docPath') === node.path
               node.path = newPath; node.name = newName // Update local reference
               if (wasActive) {
@@ -606,8 +647,9 @@ const App = {
       const btn = document.createElement('button')
       btn.className = 'sidebar-row'; btn.textContent = `▾ 📁 ${node.name}`
       container.appendChild(btn)
+
       const sub = document.createElement('div'); sub.style.paddingLeft='14px'
-      node.children.forEach(c => this._docNode(c, sub, activePath, project))
+      this._sortDocs(node.children, project.docOrder).forEach(c => this._docNode(c, sub, activePath, project))
       container.appendChild(sub)
       btn.onclick = () => sub.classList.toggle('hidden')
     }
@@ -647,6 +689,17 @@ const App = {
   async _deleteDoc(path) {
     if (!confirm('Are you sure you want to delete this document? This cannot be undone.')) return
     await api.fs.delete(path)
+
+    const project = Store.project
+    if (project && project.docOrder) {
+      const newOrder = project.docOrder.filter(p => p !== path && !p.startsWith(path + '/'))
+      const projects = Store.get('projects').map(p => 
+        p.id === project.id ? { ...p, docOrder: newOrder } : p
+      )
+      Store._data.projects = projects
+      Store.save()
+    }
+
     if (Store.get('docPath') === path) {
       Store.set('docPath', null)
     } else {
@@ -664,6 +717,47 @@ const App = {
       Store.save()
       this.render()
     } else {
+      this.render()
+    }
+  },
+
+  _sortDocs(docs, order) {
+    if (!order || !order.length) return docs
+    return [...docs].sort((a, b) => {
+      const idxA = order.indexOf(a.path)
+      const idxB = order.indexOf(b.path)
+      if (idxA === -1 && idxB === -1) return a.name.localeCompare(b.name)
+      if (idxA === -1) return 1
+      if (idxB === -1) return -1
+      return idxA - idxB
+    })
+  },
+
+  _flattenPaths(nodes) {
+    let out = []
+    for (const n of nodes) {
+      out.push(n.path)
+      if (n.children) out = out.concat(this._flattenPaths(n.children))
+    }
+    return out
+  },
+
+  async _reorderDocs(project, draggedPath, targetPath) {
+    const docs = await Project.readDocs(project.dir)
+    const allPaths = this._flattenPaths(docs)
+    let order = project.docOrder || allPaths
+    
+    const fromIdx = order.indexOf(draggedPath)
+    const toIdx = order.indexOf(targetPath)
+    
+    if (fromIdx > -1 && toIdx > -1) {
+      const newOrder = [...order]
+      const [item] = newOrder.splice(fromIdx, 1)
+      newOrder.splice(toIdx, 0, item)
+      
+      const projects = Store.get('projects').map(p => p.id === project.id ? { ...p, docOrder: newOrder } : p)
+      Store._data.projects = projects
+      Store.save()
       this.render()
     }
   },

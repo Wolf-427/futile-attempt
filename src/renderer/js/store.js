@@ -3,6 +3,7 @@ const Store = {
     projects: [], activeId: null, docPath: null,
     boardFile: 'master.json', boardStack: [],
     view: 'editor', sidebar: true,
+    theme: 'dark', paperTheme: 'auto',
     git: { dirty: false, branch: 'main', syncing: false, error: null }
   },
   _listeners: [],
@@ -54,6 +55,8 @@ const Store = {
         if (d.sidebar !== undefined) this._data.sidebar = d.sidebar
         if (d.boardFile) this._data.boardFile = d.boardFile
         if (d.docPath) this._data.docPath = d.docPath
+        if (d.theme) this._data.theme = d.theme
+        if (d.paperTheme) this._data.paperTheme = d.paperTheme
         // Restore activeId immediately — verify existence async separately
         if (d.activeId) this._data.activeId = d.activeId
       }
@@ -89,6 +92,8 @@ const Store = {
           docPath:   this._data.docPath,
           sidebar:   this._data.sidebar,
           boardFile: this._data.boardFile,
+          theme:     this._data.theme,
+          paperTheme: this._data.paperTheme,
         }))
       } catch(e) { console.error('Store save error:', e) }
     }, 100)

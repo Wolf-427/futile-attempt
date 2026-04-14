@@ -221,17 +221,23 @@ const Editor = {
     const pg = await this.getPageSize()
     const wrap = document.getElementById('editor-page-wrap')
     if (!wrap) return
+
+    const paperTheme = Store.get('paperTheme')
+    const isLight = paperTheme === 'light' || (paperTheme === 'auto' && Store.get('theme') === 'light')
+    const isDark = paperTheme === 'dark' || (paperTheme === 'auto' && Store.get('theme') === 'dark')
+    wrap.classList.toggle('paper-light', isLight)
+    wrap.classList.toggle('paper-dark', isDark)
+
     const lineH = pg.height - this.MARGIN * 2
     wrap.style.cssText = `
       width: ${pg.width}px;
       min-height: ${pg.height}px;
-      background: #1c1c18;
       border: 1px solid var(--b1);
       border-radius: 2px;
       box-shadow: 0 4px 24px rgba(0,0,0,0.5);
       padding: ${this.MARGIN}px;
       position: relative;
-      background-image: repeating-linear-gradient(to bottom, transparent, transparent ${lineH - 1}px, rgba(255,255,255,0.07) ${lineH - 1}px, rgba(255,255,255,0.07) ${lineH}px);
+      background-image: repeating-linear-gradient(to bottom, transparent, transparent ${lineH - 1}px, var(--paper-line) ${lineH - 1}px, var(--paper-line) ${lineH}px);
       background-size: 100% ${lineH}px;
       background-position: 0 ${this.MARGIN}px;
     `
