@@ -340,17 +340,37 @@ const App = {
       Store.save(); this.render()
     })
 
-    if (s.sidebar && s.view !== 'settings') this.renderSidebar(project)
+    // Optimized sidebar rendering
+    const sidebarContainer = document.getElementById('sidebar-container')
+    if (s.sidebar && s.view !== 'settings') {
+      if (!sidebarContainer || sidebarContainer.innerHTML === '' || sidebarContainer.dataset.projectId !== project.id) {
+        this.renderSidebar(project)
+      } else {
+        this._updateSidebarSelection()
+      }
+    }
+
     const main = document.getElementById('main-content')
     if (s.view === 'editor')   this.renderEditor(main, project)
     if (s.view === 'board')    this.renderBoard(main, project)
     if (s.view === 'settings') Settings.mount(main, project)
   },
 
-  renderSidebar(project) {
+  async renderSidebar(project) {
     const s = Store.get()
     const container = document.getElementById('sidebar-container')
-    container.className = 'sidebar'; container.innerHTML = ''
+    if (!container) return
+    container.className = 'sidebar'
+    container.dataset.projectId = project.id
+
+    // 1. Fetch data BEFORE clearing DOM
+    const [docs, boards] = await Promise.all([
+      Project.readDocs(project.dir),
+      Project.readBoards(project.dir)
+    ])
+
+    // 2. Build everything in memory
+    const fragment = document.createDocumentFragment()
 
     const docsSection = document.createElement('div'); docsSection.className = 'sidebar-section'
     const docsHdr = document.createElement('div'); docsHdr.className = 'sidebar-header'
@@ -359,7 +379,7 @@ const App = {
     addDocBtn.onclick = () => this._showNewDocModal(project)
     docsHdr.appendChild(docsLbl); docsHdr.appendChild(addDocBtn); docsSection.appendChild(docsHdr)
     const docTree = document.createElement('div'); docsSection.appendChild(docTree)
-    container.appendChild(docsSection)
+    fragment.appendChild(docsSection)
 
     const boardsSection = document.createElement('div'); boardsSection.className = 'sidebar-section'
     const boardsHdr = document.createElement('div'); boardsHdr.className = 'sidebar-header'
@@ -376,6 +396,7 @@ const App = {
     // 1. Static Master Board Button (Never cleared)
     const masterBtn = document.createElement('button')
     masterBtn.className = 'sidebar-row master-board-row' + (s.view==='board'&&s.boardFile==='master.json'?' board-active':'')
+    masterBtn.dataset.file = 'master.json'
     const masterIcon = document.createElement('span'); masterIcon.textContent = '◎ '
     const masterName = document.createElement('span'); masterName.textContent = 'Master board'
     masterName.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
@@ -386,38 +407,37 @@ const App = {
     // 2. Container for dynamic sub-boards
     const subBoardsList = document.createElement('div'); subBoardsList.id = 'sidebar-sub-boards'
     boardsSection.appendChild(subBoardsList)
-    container.appendChild(boardsSection)
+    fragment.appendChild(boardsSection)
 
     const footer = document.createElement('div'); footer.className = 'sidebar-footer'
     const pathBtn = document.createElement('button'); pathBtn.className = 'sidebar-path'
     pathBtn.innerHTML = `⌂ <span>${project.dir.split('/').pop()}</span>`
     pathBtn.onclick = () => api.shell.open(project.dir)
-    footer.appendChild(pathBtn); container.appendChild(footer)
+    footer.appendChild(pathBtn); fragment.appendChild(footer)
 
-    Project.readDocs(project.dir).then(docs => {
-      if (!docs.length) { const e=document.createElement('span'); e.className='sidebar-empty'; e.textContent='No documents yet'; docTree.appendChild(e); return }
+    // 3. Populate Lists
+    if (!docs.length) {
+      const e = document.createElement('span'); e.className = 'sidebar-empty'; e.textContent = 'No documents yet'; docTree.appendChild(e)
+    } else {
       this._sortDocs(docs, project.docOrder).forEach(n => this._docNode(n, docTree, s.docPath, project))
-    }).catch(e => console.error("Error reading docs:", e))
+    }
 
-    Project.readBoards(project.dir).then(boards => {
-      // Clear only the sub-boards container
-      subBoardsList.innerHTML = ''
+    boards.filter(b => !b.isMaster).forEach(b => {
+      const btn = document.createElement('button')
+      btn.className = 'sidebar-row' + (s.view === 'board' && s.boardFile === b.file ? ' board-active' : '')
+      btn.dataset.file = b.file
+      
+      const icon = document.createElement('span'); icon.textContent = '⊞ '; btn.appendChild(icon)
+      const lbl = document.createElement('span'); lbl.textContent = b.name; lbl.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'; btn.appendChild(lbl)
+      const cnt = document.createElement('span'); cnt.className = 'board-count'; cnt.textContent = (b.nodes||[]).length; btn.appendChild(cnt)
 
-      boards.filter(b=>!b.isMaster).forEach(b => {
-        const btn = document.createElement('button')
-        btn.className = 'sidebar-row'+(s.view==='board'&&s.boardFile===b.file?' board-active':'')
-        
-        const icon = document.createElement('span'); icon.textContent = '⊞ '; btn.appendChild(icon)
-        const lbl = document.createElement('span'); lbl.textContent = b.name; lbl.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'; btn.appendChild(lbl)
-        const cnt = document.createElement('span'); cnt.className = 'board-count'; cnt.textContent = (b.nodes||[]).length; btn.appendChild(cnt)
+      btn.onclick = () => {
+        if (Store.get('boardFile') === b.file && Store.get('view') === 'board') return
+        Store.set('view', 'board')
+        this.openBoard(b.file, false)
+      }
 
-        btn.onclick = () => {
-          if (Store.get('boardFile') === b.file && Store.get('view') === 'board') return
-          Store.set('view', 'board')
-          this.openBoard(b.file, false)
-        }
-
-        const _startBoardRename = (ev) => {
+      const _startBoardRename = (ev) => {
           if (ev) { ev.stopPropagation(); ev.preventDefault() }
           const inp = document.createElement('input')
           inp.value = b.name
@@ -464,7 +484,28 @@ const App = {
         })
         btn.title = 'Click to open · Drag onto canvas to pin'
         subBoardsList.appendChild(btn)
-      })
+    })
+
+    // 4. Atomic Swap
+    container.innerHTML = ''
+    container.appendChild(fragment)
+  },
+
+  _updateSidebarSelection() {
+    const s = Store.get()
+    const container = document.getElementById('sidebar-container')
+    if (!container) return
+
+    // Update Doc selection
+    container.querySelectorAll('.sidebar-row[data-path]').forEach(btn => {
+      const active = s.view === 'editor' && btn.dataset.path === s.docPath
+      btn.classList.toggle('active', active)
+    })
+
+    // Update Board selection
+    container.querySelectorAll('.sidebar-row[data-file]').forEach(btn => {
+      const active = s.view === 'board' && btn.dataset.file === s.boardFile
+      btn.classList.toggle('board-active', active)
     })
   },
 
@@ -550,6 +591,7 @@ const App = {
       const btn = document.createElement('button')
       const isCurrentDoc = activePath === node.path
       btn.className = 'sidebar-row' + (isCurrentDoc && Store.get('view') === 'editor' ? ' active' : '')
+      btn.dataset.path = node.path
       btn.title = node.name
 
       // Drag & Drop
