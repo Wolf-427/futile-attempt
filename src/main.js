@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, net } = require('electron')
 const path = require('path')
 const fs = require('fs').promises
+const htmlToDocx = require('html-to-docx')
 const fss = require('fs')
 
 let win
@@ -30,6 +31,7 @@ app.whenReady().then(() => {
   setupFs()
   setupDialogs()
   setupUpdater()
+  setupExport()
 })
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
@@ -90,6 +92,35 @@ function setupDialogs() {
   ipcMain.handle('dialog:file', async (_, filters) => {
     const r = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: filters || [] })
     return r.canceled ? null : r.filePaths[0]
+  })
+  ipcMain.handle('dialog:save', async (_, title, defaultName, filters) => {
+    const r = await dialog.showSaveDialog(win, { title, defaultPath: defaultName, filters })
+    return r.canceled ? null : r.filePath
+  })
+}
+
+// ── Export ────────────────────────────────────────────────────────────────────
+function setupExport() {
+  ipcMain.handle('export:pdf', async (_, filePath) => {
+    const options = {
+      marginsType: 0,
+      pageSize: 'A4',
+      printBackground: true,
+      displayHeaderFooter: false
+    }
+    const data = await win.webContents.printToPDF(options)
+    await fs.writeFile(filePath, data)
+    return true
+  })
+
+  ipcMain.handle('export:docx', async (_, filePath, htmlContent) => {
+    try {
+      const docxBuffer = await htmlToDocx(htmlContent, null, {
+        // Options for html-to-docx, e.g., styles, margins
+      })
+      await fs.writeFile(filePath, docxBuffer)
+      return true
+    } catch (error) { throw error }
   })
 }
 

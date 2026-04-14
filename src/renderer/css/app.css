@@ -13,34 +13,29 @@
   --r:4px;--r2:8px;--r3:12px;
   --th:52px;--sw:220px;
   --paper-bg: #1c1c18; --paper-tx: var(--tx);
-  --paper-line: rgba(255,255,255,0.07);
+  --paper-line: rgba(255,255,255,0.07); /* Default dark paper line */
 }
 
 .light-mode {
   --bg:#fdfdfc; --bg1:#f5f4f0; --bg2:#ecebe4; --bg3:#e4e2d9; --bgh:#dedcd0; --bga:#d6d4c4;
   --b0:rgba(0,0,0,0.05); --b1:rgba(0,0,0,0.08); --b2:rgba(0,0,0,0.15);
   --tx:#1a1a18; --tx2:#5a5852; --tx3:#9a9890;
-  --paper-bg: #f5f4f0;
+  --paper-bg: #f5f4f0; /* Default light paper background */
   --paper-line: rgba(0,0,0,0.06);
 }
 
 /* Paper overrides */
-.editor-page-wrap { background: var(--paper-bg); color: var(--paper-tx); transition: background 0.3s ease; }
+.editor-page-wrap {
+  color: var(--paper-tx);
+  display: block;
+}
 .editor-page-wrap.paper-light {
   --paper-bg: #ffffff;
   --paper-tx: #111111;
-  --tx: #111111;
-  --tx2: #444442;
-  --paper-line: rgba(0,0,0,0.06);
-  border-color: rgba(0,0,0,0.1) !important;
 }
 .editor-page-wrap.paper-dark {
   --paper-bg: #1c1c18;
   --paper-tx: #e8e6df;
-  --tx: #e8e6df;
-  --tx2: #9a9890;
-  --paper-line: rgba(255,255,255,0.07);
-  border-color: var(--b1) !important;
 }
 
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
@@ -168,7 +163,7 @@ textarea,input{font-family:var(--sans);}
 .editor-tool:hover{background:var(--bgh);color:var(--tx);}
 .editor-tool.active{background:var(--bga);color:var(--accent);}
 .editor-div{width:1px;height:16px;background:var(--b0);margin:0 4px;flex-shrink:0;}
-.editor-scroll{flex:1;overflow-y:auto;background:var(--bg);display:flex;justify-content:center;padding:48px 24px 80px;}
+.editor-scroll{flex:1;overflow-y:auto;background:var(--bg);display:flex;flex-direction:column;align-items:center;padding:48px 24px 80px;}
 .editor-empty{flex:1;display:flex;align-items:center;justify-content:center;color:var(--tx3);font-style:italic;}
 .editor-status{display:flex;gap:16px;padding:5px 20px;border-top:1px solid var(--b0);background:var(--bg1);font-size:11px;color:var(--tx3);flex-shrink:0;}
 .ProseMirror{outline:none;font-family:var(--serif);font-size:18px;line-height:1.8;color:var(--tx);caret-color:var(--accent);}
@@ -244,6 +239,7 @@ textarea,input{font-family:var(--sans);}
 .editor-page-sel{background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r);color:var(--tx2);font-family:var(--sans);font-size:12px;padding:3px 6px;outline:none;margin-left:4px;}
 .editor-page-sel:focus{border-color:var(--accent);}
 hr.page-break{border:none;border-top:2px dashed rgba(201,169,110,0.3);margin:0;width:100%;cursor:default;pointer-events:none;}
+.page-break-spacer{display:block;pointer-events:none;user-select:none;}
 /* ── Splash screen ─────────────────────────────────────────────────────────── */
 .splash { display:flex; flex-direction:column; height:100%; background:var(--bg); }
 .splash-drag { -webkit-app-region:drag; height:var(--th); flex-shrink:0; }
@@ -625,5 +621,47 @@ input[type=range].editor-font-size::-webkit-slider-thumb { -webkit-appearance: n
   line-height: 1.2;
   font-family: var(--sans);
   min-width: 24px;
+}
+
+/* ── Print/Export Styles ───────────────────────────────────────────────────── */
+@media print {
+  .titlebar, .sidebar, .editor-toolbar, .editor-status, .nav-group, .spacer { display: none !important; }
+  .workspace, .body, .main, .editor-scroll { display: block !important; padding: 0 !important; margin: 0 !important; overflow: visible !important; }
+  .editor-page-wrap {
+    box-shadow: none !important;
+    border: none !important;
+    width: 794px !important; /* Force A4 width on print */
+    margin: 0 !important;
+    background-image: none !important; /* Hide lines on export */
+    background: white !important;
+  }
+  body { background: white !important; color: black !important; }
+  .page-auto-spacer, .page-break-spacer { display: none !important; }
+  hr.page-break { page-break-after: always; display: block; }
+}
+
+/* Force print styles during PDF generation */
+.is-exporting .titlebar, .is-exporting .sidebar, .is-exporting .editor-toolbar, .is-exporting .editor-status { display: none !important; }
+.is-exporting .main { width: 100vw !important; height: 100vh !important; }
+.is-exporting .editor-scroll { background: white !important; padding: 0 !important; }
+.is-exporting .editor-page-wrap {
+  background: white !important;
+  color: black !important;
+  border: none !important;
+  box-shadow: none !important;
+  width: 100% !important;
+}
+/* Spacers are layout-only — never appear in print/export */
+.is-exporting .page-auto-spacer,
+.is-exporting .page-break-spacer { display: none !important; }
+.is-exporting hr.page-break { page-break-after: always; display: block; }
+/* Ensure all text elements inside the editor are forced to black during export */
+.is-exporting .ProseMirror,
+.is-exporting .ProseMirror h1,
+.is-exporting .ProseMirror h2,
+.is-exporting .ProseMirror h3,
+.is-exporting .ProseMirror blockquote,
+.is-exporting .ProseMirror p {
+  color: black !important;
 }
 .text-fmt-btn:hover { background: rgba(255,255,255,0.08); color: var(--tx); }

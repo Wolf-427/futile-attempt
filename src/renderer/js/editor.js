@@ -2,6 +2,7 @@ const Editor = {
   _docPath: null,
   _saveTimer: null,
   _content: null,
+  _pageSize: null,
 
   PAGE_SIZES: {
     a4:     { width: 794,  height: 1123, label: 'A4' },
@@ -9,6 +10,7 @@ const Editor = {
     custom: { width: 794,  height: 1123, label: 'Custom' },
   },
   MARGIN: 80,
+  PAGE_GAP: 32,
 
   // Word-standard font sizes
   FONT_SIZES: [8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72],
@@ -39,6 +41,7 @@ const Editor = {
     `
     this._content = document.getElementById('editor-content')
     this._buildToolbar()
+    document.execCommand('defaultParagraphSeparator', false, 'p')
     this._content.addEventListener('input', () => this._onInput())
     this._content.addEventListener('keydown', e => this._onKeydown(e))
     this._content.addEventListener('keyup', () => this._updateToolbar())
@@ -170,6 +173,67 @@ const Editor = {
       this._applyPageSize()
     })
     tb.appendChild(pgSel)
+
+    // Export button
+    tb.appendChild(div()) // Separator
+    const exportBtn = btn('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>', () => this._showExportOptions(), null, 'Export Document')
+    tb.appendChild(exportBtn)
+  },
+
+  async _showExportOptions() {
+    const name = this._docPath ? this._docPath.split('/').pop().replace('.md', '') : 'Document'
+
+    const overlay = document.createElement('div'); overlay.className = 'modal-overlay'
+    overlay.innerHTML = `
+      <div class="modal">
+        <div class="modal-header">Export Document</div>
+        <div class="modal-body">
+          <p class="modal-label">Choose export format:</p>
+          <div style="display:flex;gap:10px;margin-top:10px;">
+            <button class="btn-sm primary" id="export-pdf-btn" style="flex:1;">Export as PDF</button>
+            <button class="btn-sm primary" id="export-docx-btn" style="flex:1;">Export as DOCX</button>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-sm" id="modal-cancel">Cancel</button>
+        </div>
+      </div>
+    `
+    document.body.appendChild(overlay)
+
+    const close = () => overlay.remove()
+
+    overlay.querySelector('#modal-cancel').onclick = close
+    overlay.onclick = (e) => { if (e.target === overlay) close() }
+
+    overlay.querySelector('#export-pdf-btn').onclick = async () => {
+      close()
+      const path = await api.dialog.save('Export PDF', `${name}.pdf`, [{ name: 'PDF Files', extensions: ['pdf'] }])
+      if (!path) return
+
+      document.body.classList.add('is-exporting')
+      try {
+        await api.export.pdf(path)
+        alert('Export successful!')
+      } catch (e) {
+        alert('Export failed: ' + e.message)
+      } finally {
+        document.body.classList.remove('is-exporting')
+      }
+    }
+
+    overlay.querySelector('#export-docx-btn').onclick = async () => {
+      close()
+      const path = await api.dialog.save('Export DOCX', `${name}.docx`, [{ name: 'Word Documents', extensions: ['docx'] }])
+      if (!path) return
+
+      try {
+        await api.export.docx(path, this._getCleanHTML())
+        alert('Export successful!')
+      } catch (e) {
+        alert('Export failed: ' + e.message)
+      }
+    }
   },
 
   _exec(cmd, arg) { document.execCommand(cmd, false, arg || null); this._content.focus() },
@@ -193,13 +257,30 @@ const Editor = {
   },
 
   _insertPageBreak() {
-    document.execCommand('insertHTML', false, '<hr class="page-break" contenteditable="false"><p><br></p>')
+    document.execCommand('insertHTML', false,
+      '<hr class="page-break" contenteditable="false"><p><br></p>'
+    )
     this._content.focus()
+    if (!this._pageSize) return
+    // Run spacers immediately, then scroll the cursor into view on the new page
+    requestAnimationFrame(() => {
+      const { pages } = this._updatePageSpacers(this._pageSize)
+      const wrap = document.getElementById('editor-page-wrap')
+      if (wrap) wrap.style.height = `${pages * (this._pageSize.height + this.PAGE_GAP) - this.PAGE_GAP}px`
+      const pc = document.getElementById('page-count')
+      if (pc) pc.textContent = `Page ${pages}`
+      const sel = window.getSelection()
+      if (sel?.focusNode) {
+        const node = sel.focusNode.nodeType === Node.TEXT_NODE
+          ? sel.focusNode.parentElement : sel.focusNode
+        node?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+    })
   },
 
   _onInput() {
     this._updateCounts()
-    this.getPageSize().then(pg => this._updatePageCount(pg))
+    if (this._pageSize) this._updatePageCount(this._pageSize)
     clearTimeout(this._saveTimer)
     this._saveTimer = setTimeout(() => this._save(), 1400)
     Store.patch('git', { dirty: true })
@@ -228,29 +309,136 @@ const Editor = {
     wrap.classList.toggle('paper-light', isLight)
     wrap.classList.toggle('paper-dark', isDark)
 
-    const lineH = pg.height - this.MARGIN * 2
-    wrap.style.cssText = `
-      width: ${pg.width}px;
-      min-height: ${pg.height}px;
-      border: 1px solid var(--b1);
-      border-radius: 2px;
-      box-shadow: 0 4px 24px rgba(0,0,0,0.5);
-      padding: ${this.MARGIN}px;
-      position: relative;
-      background-image: repeating-linear-gradient(to bottom, transparent, transparent ${lineH - 1}px, var(--paper-line) ${lineH - 1}px, var(--paper-line) ${lineH}px);
-      background-size: 100% ${lineH}px;
-      background-position: 0 ${this.MARGIN}px;
+    const gap = this.PAGE_GAP
+    const tileH = pg.height + gap
+
+    wrap.style.width = `${pg.width}px`
+    wrap.style.height = `${pg.height}px`
+    wrap.style.padding = `${this.MARGIN}px`
+    wrap.style.position = 'relative'
+    wrap.style.boxShadow = 'none'
+    wrap.style.border = 'none'
+
+    // Fetch computed CSS variables after classes are applied
+    const computedStyle = getComputedStyle(wrap)
+    const paperBg   = computedStyle.getPropertyValue('--paper-bg').trim()
+    const deskColor = getComputedStyle(document.body).getPropertyValue('--bg').trim()
+
+    // Layer 1 — drop shadow that bleeds into the gap below each page
+    // Layer 2 — full page rectangle (paperBg) + gap (deskColor)
+    wrap.style.backgroundImage = `
+      linear-gradient(to bottom,
+        transparent        0px,
+        transparent        ${pg.height}px,
+        rgba(0,0,0,0.22)   ${pg.height}px,
+        rgba(0,0,0,0.06)   ${pg.height + 18}px,
+        transparent        ${pg.height + 36}px,
+        transparent        ${tileH}px
+      ),
+      linear-gradient(to bottom,
+        ${paperBg}   0px,
+        ${paperBg}   ${pg.height}px,
+        ${deskColor} ${pg.height}px,
+        ${deskColor} ${tileH}px
+      )
     `
-    if (this._content) this._content.style.minHeight = lineH + 'px'
+    wrap.style.backgroundColor = paperBg
+    wrap.style.backgroundSize = `100% ${tileH}px`
+    wrap.style.backgroundRepeat = 'repeat-y'
+    wrap.style.backgroundPosition = '0 0'
+
+    if (this._content) this._content.style.minHeight = (pg.height - this.MARGIN * 2) + 'px'
+
+    // Inject @page rule so printToPDF respects the chosen page size and margins
+    let pageStyleEl = document.getElementById('editor-page-style')
+    if (!pageStyleEl) {
+      pageStyleEl = document.createElement('style')
+      pageStyleEl.id = 'editor-page-style'
+      document.head.appendChild(pageStyleEl)
+    }
+    pageStyleEl.textContent = `@page { size: ${pg.width}px ${pg.height}px; margin: ${this.MARGIN}px; }`
+
+    this._pageSize = pg
     this._updatePageCount(pg)
   },
 
   _updatePageCount(pg) {
     if (!this._content) return
-    const lineH = pg.height - this.MARGIN * 2
-    const pages = Math.max(1, Math.ceil(this._content.scrollHeight / lineH))
-    const el = document.getElementById('page-count')
-    if (el) el.textContent = `Page ${pages}`
+    requestAnimationFrame(() => {
+      const { pages } = this._updatePageSpacers(pg)
+      const el = document.getElementById('page-count')
+      if (el) el.textContent = `Page ${pages}`
+      const wrap = document.getElementById('editor-page-wrap')
+      if (wrap) wrap.style.height = `${pages * (pg.height + this.PAGE_GAP) - this.PAGE_GAP}px`
+    })
+  },
+
+  // Inserts spacer divs at page overflow boundaries so content never renders over
+  // the inter-page gap. Uses offsetTop (not offsetHeight sums) so CSS margins are
+  // correctly accounted for. Returns the actual page count.
+  _updatePageSpacers(pg) {
+    const contentAreaH = pg.height - 2 * this.MARGIN      // usable content height per page
+    const spacerH      = this.PAGE_GAP + 2 * this.MARGIN  // visual gap + both page margins
+
+    // Remove old spacers first so offsetTop readings reflect clean layout
+    this._content.querySelectorAll('.page-auto-spacer, .page-break-spacer').forEach(s => s.remove())
+
+    // offsetTop of the content div itself gives the wrap-top-to-content-div offset (= MARGIN).
+    // Subtracting it converts each child's offsetTop to content-div-local coordinates.
+    const contentDivOffset = this._content.offsetTop
+
+    const childData = Array.from(this._content.children).map(el => ({
+      el,
+      // Use offsetTop so CSS margins between paragraphs are included in position
+      top:    el.offsetTop - contentDivOffset,
+      bottom: el.offsetTop + el.offsetHeight - contentDivOffset,
+      isBreakHR: el.tagName === 'HR' && el.classList.contains('page-break'),
+    }))
+
+    const toInsert    = []
+    let pageNum       = 0
+    let totalSpacersH = 0  // cumulative spacer pixels inserted so far (shifts paged positions)
+
+    // Paged limit: where page N's content area ends in paged coordinates
+    const pagedLimit = () => (pageNum + 1) * contentAreaH + pageNum * spacerH
+
+    for (const { el, top, bottom, isBreakHR } of childData) {
+      // Convert natural positions → paged positions
+      const pagedTop    = top    + totalSpacersH
+      const pagedBottom = bottom + totalSpacersH
+
+      if (isBreakHR) {
+        // Explicit page break: advance to next page regardless of position
+        pageNum++
+        const nextPageStart = pageNum * (contentAreaH + spacerH)
+        const needed = Math.max(0, nextPageStart - pagedBottom)
+        if (needed > 0) {
+          toInsert.push({ ref: el, after: true, h: needed, cls: 'page-break-spacer' })
+          totalSpacersH += needed
+        }
+        continue
+      }
+
+      if (pagedBottom > pagedLimit()) {
+        // Element overflows: insert spacer before it to push it to the next page
+        const remaining    = Math.max(0, pagedLimit() - pagedTop)
+        const spacerHeight = remaining + spacerH
+        toInsert.push({ ref: el, after: false, h: spacerHeight, cls: 'page-auto-spacer' })
+        totalSpacersH += spacerHeight
+        pageNum++
+      }
+    }
+
+    for (const { ref, after, h, cls } of toInsert) {
+      const s = document.createElement('div')
+      s.className = cls
+      s.contentEditable = 'false'
+      s.style.cssText = `height:${Math.max(0, h)}px;display:block;pointer-events:none;user-select:none;`
+      if (after) ref.insertAdjacentElement('afterend', s)
+      else       this._content.insertBefore(s, ref)
+    }
+
+    return { pages: pageNum + 1 }
   },
 
   _updateCounts() {
@@ -295,9 +483,15 @@ const Editor = {
     })
   },
 
+  _getCleanHTML() {
+    const clone = this._content.cloneNode(true)
+    clone.querySelectorAll('.page-auto-spacer, .page-break-spacer').forEach(s => s.remove())
+    return clone.innerHTML
+  },
+
   async _save() {
     if (!this._docPath) return
-    try { await api.fs.write(this._docPath, this._html2md(this._content.innerHTML)) } catch {}
+    try { await api.fs.write(this._docPath, this._html2md(this._getCleanHTML())) } catch {}
   },
 
   _md2html(md) {
@@ -314,17 +508,81 @@ const Editor = {
   },
 
   _html2md(html) {
-    return html
-      .replace(/<hr[^>]*class="page-break"[^>]*>/gi, '\n---PAGE---\n')
-      .replace(/<h1[^>]*>(.*?)<\/h1>/gi, '# $1\n')
-      .replace(/<h2[^>]*>(.*?)<\/h2>/gi, '## $1\n')
-      .replace(/<h3[^>]*>(.*?)<\/h3>/gi, '### $1\n')
-      .replace(/<strong[^>]*>(.*?)<\/strong>/gi, '**$1**')
-      .replace(/<em[^>]*>(.*?)<\/em>/gi, '*$1*')
-      .replace(/<blockquote[^>]*>(.*?)<\/blockquote>/gi, '> $1\n')
-      .replace(/<li[^>]*>(.*?)<\/li>/gi, '- $1\n')
-      .replace(/<[^>]+>/g, '')
-      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ')
-      .trim() + '\n'
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    let markdown = '';
+
+    const processNode = (node) => {
+      let result = '';
+      if (node.nodeType === Node.TEXT_NODE) {
+        result += node.textContent;
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        const tagName = node.tagName.toLowerCase();
+        const childrenMarkdown = Array.from(node.childNodes).map(processNode).join('');
+
+        switch (tagName) {
+          case 'h1':    result += `\n# ${childrenMarkdown}\n`; break;
+          case 'h2':    result += `\n## ${childrenMarkdown}\n`; break;
+          case 'h3':    result += `\n### ${childrenMarkdown}\n`; break;
+          case 'p':
+          case 'div':   // Treat divs as paragraphs for contenteditable output
+            // Only add newlines if content exists, to avoid excessive blank lines
+            if (childrenMarkdown.trim()) {
+              result += `\n\n${childrenMarkdown}`;
+            } else if (node.innerHTML === '<br>') { // Handle empty paragraphs with just a <br>
+              result += '\n\n';
+            }
+            break;
+          case 'strong':
+          case 'b':     result += `**${childrenMarkdown}**`; break;
+          case 'em':
+          case 'i':     result += `*${childrenMarkdown}*`; break;
+          case 'blockquote': result += `\n> ${childrenMarkdown.replace(/\n\n/g, '\n> ').trim()}\n`; break;
+          case 'ul':
+          case 'ol':
+            // List items are handled by their children, just ensure block separation
+            result += `\n${childrenMarkdown}\n`;
+            break;
+          case 'li':
+            // Indent list items and add bullet/number. This is a simplification.
+            // For nested lists, a more complex state machine would be needed.
+            result += `- ${childrenMarkdown.trim()}\n`;
+            break;
+          case 'hr':
+            if (node.classList.contains('page-break')) {
+              result += '\n---PAGE---\n';
+            } else {
+              result += '\n---\n'; // Generic HR
+            }
+            break;
+          case 'br':    result += '\n'; break;
+          // Add more cases for other HTML tags as needed (e.g., code, links, images)
+          default:      result += childrenMarkdown; break; // Fallback for unhandled tags
+        }
+      }
+      return result;
+    };
+
+    // Process all top-level nodes in the body
+    Array.from(doc.body.childNodes).forEach(node => {
+      markdown += processNode(node);
+    });
+
+    // Decode HTML entities that might have been preserved
+    markdown = markdown
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&nbsp;/g, ' ');
+
+    // Clean up excessive newlines
+    markdown = markdown.replace(/\n\s*\n/g, '\n\n'); // Collapse multiple blank lines
+    markdown = markdown.replace(/^\n+/, '').trim(); // Trim leading/trailing newlines
+
+    // Ensure a final newline if content exists
+    if (markdown.length > 0 && !markdown.endsWith('\n')) {
+      markdown += '\n';
+    }
+
+    return markdown;
   }
 }
