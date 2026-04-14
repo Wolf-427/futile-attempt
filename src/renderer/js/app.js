@@ -317,9 +317,14 @@ const App = {
           <div class="nav-group">
             <button class="nav-btn" data-view="editor">Editor</button>
             <button class="nav-btn" data-view="board">Canvas</button>
-            <button class="nav-btn" data-view="settings">Settings</button>
           </div>
           <div class="spacer"></div>
+          <button class="titlebar-btn" id="btn-settings" title="Settings">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+          </button>
         </div>
         <div class="body">
           <div id="sidebar-container" ${!s.sidebar||s.view==='settings'?'class="hidden"':''}></div>
@@ -334,6 +339,15 @@ const App = {
         })
       })
       document.getElementById('toggle-sidebar').addEventListener('click', () => Store.set('sidebar', !Store.get('sidebar')))
+      document.getElementById('btn-settings').addEventListener('click', () => {
+        const current = Store.get('view');
+        if (current === 'settings') {
+          // If we have a docPath, return to editor, otherwise default to board
+          Store.set('view', Store.get('docPath') ? 'editor' : 'board');
+        } else {
+          Store.set('view', 'settings');
+        }
+      })
       document.getElementById('btn-home').addEventListener('click', () => {
         Store._data.activeId = null; Store._data.boardStack = []; Store._data.view = 'editor'
         Store.save(); this.render()
@@ -344,6 +358,8 @@ const App = {
     root.querySelectorAll('.nav-btn').forEach(btn => {
       btn.classList.toggle('active', s.view === btn.dataset.view)
     })
+
+    root.querySelector('#btn-settings')?.classList.toggle('active', s.view === 'settings')
 
     const sidebarContainer = document.getElementById('sidebar-container')
     if (sidebarContainer) {
@@ -824,6 +840,7 @@ const App = {
     // Only mount if the editor structure isn't there
     if (!container.querySelector('.editor')) {
       Editor.mount(container)
+      container.dataset.path = '' // Force load because the UI was just rebuilt
     }
     // Only load if the document actually changed
     if (container.dataset.path !== docPath) {
