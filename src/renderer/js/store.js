@@ -57,8 +57,6 @@ const Store = {
         if (d.docPath) this._data.docPath = d.docPath
         if (d.theme) this._data.theme = d.theme
         if (d.paperTheme) this._data.paperTheme = d.paperTheme
-        // Restore activeId immediately — verify existence async separately
-        if (d.activeId) this._data.activeId = d.activeId
       }
     } catch(e) { console.error('Store loadSync error:', e) }
   },
@@ -88,7 +86,6 @@ const Store = {
       try {
         localStorage.setItem('scriptum-store', JSON.stringify({
           projects:  this._data.projects,
-          activeId:  this._data.activeId,
           docPath:   this._data.docPath,
           sidebar:   this._data.sidebar,
           boardFile: this._data.boardFile,

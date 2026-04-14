@@ -21,6 +21,12 @@ const Canvas = {
   _history:    [],
   _histIdx:    -1,
   _persistTimer: null,
+  _ARROW_COLORS: {
+    default: {stroke:'rgba(201,169,110,0.8)'},
+    red:     {stroke:'rgba(220,80,80,0.8)'},
+    blue:    {stroke:'rgba(80,140,255,0.8)'},
+    green:   {stroke:'rgba(80,195,120,0.8)'},
+  },
 
   _persistDebounced() {
     clearTimeout(this._persistTimer)
@@ -95,8 +101,49 @@ const Canvas = {
     this._area  = document.getElementById('cv-area')
     this._world = document.getElementById('cv-world')
     this._svg   = document.getElementById('cv-svg')
+    this._ensureSvgDefs()
     this._bindEvents()
     this._load()
+  },
+
+  _ensureSvgDefs() {
+    if (!this._svg) return
+
+    let defs = this._svg.querySelector('defs')
+    if (!defs) {
+      defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs')
+      this._svg.prepend(defs)
+    } else {
+      // Clear existing markers to prevent duplicates on re-render
+      defs.innerHTML = ''
+    }
+
+    for (const key in this._ARROW_COLORS) {
+      const color = this._ARROW_COLORS[key].stroke
+
+      // Unselected marker
+      let marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker')
+      marker.setAttribute('id', `cvmk-${key}`)
+      marker.setAttribute('viewBox', '0 0 10 10')
+      marker.setAttribute('refX', '9')
+      marker.setAttribute('refY', '5')
+      marker.setAttribute('markerWidth', '6')
+      marker.setAttribute('markerHeight', '6')
+      marker.setAttribute('orient', 'auto-start-reverse')
+      let path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+      path.setAttribute('d', 'M 0 0 L 10 5 L 0 10 z')
+      path.setAttribute('fill', color)
+      marker.appendChild(path)
+      defs.appendChild(marker)
+
+      // Selected marker (white)
+      marker = marker.cloneNode(false)
+      marker.setAttribute('id', `cvmk-${key}-sel`)
+      path = path.cloneNode(true)
+      path.setAttribute('fill', '#fff')
+      marker.appendChild(path)
+      defs.appendChild(marker)
+    }
   },
 
   // ── Toolbar ───────────────────────────────────────────────────────────────
@@ -520,7 +567,7 @@ const Canvas = {
     })
 
     this._area.addEventListener('dragover', e => { 
-      if (e.dataTransfer.types.includes('text/board-file') || e.dataTransfer.types.includes('Files') || e.dataTransfer.types.includes('text/uri-list')) e.preventDefault() 
+      if (e.dataTransfer.types.includes('text/board-file') || e.dataTransfer.types.includes('text/doc-path') || e.dataTransfer.types.includes('Files') || e.dataTransfer.types.includes('text/uri-list')) e.preventDefault() 
     })
     this._area.addEventListener('drop', async e => {
       const bf = e.dataTransfer.getData('text/board-file')
@@ -898,19 +945,11 @@ const Canvas = {
 
   _renderArrows() {
     const svg=this._svg; if(!svg) return
-    // Only clear paths, keep defs/markers
-    const existingPaths = svg.querySelectorAll('path:not(#cv-arrow-preview)')
+    // Only clear top-level arrow paths, keep the markers inside <defs>
+    const existingPaths = svg.querySelectorAll(':scope > path:not(#cv-arrow-preview)')
     existingPaths.forEach(p => p.remove())
     
     const arrows=this._board?.arrows||[]; if(!arrows.length) return
-
-    // Pre-defined colors for the render loop
-    const COLORS = {
-      default: {stroke:'rgba(201,169,110,0.8)'},
-      red:     {stroke:'rgba(220,80,80,0.8)'},
-      blue:    {stroke:'rgba(80,140,255,0.8)'},
-      green:   {stroke:'rgba(80,195,120,0.8)'},
-    }
 
     let barArrow=null, barMx=0, barMy=0
     for (const a of arrows) {
@@ -932,8 +971,8 @@ const Canvas = {
       }
 
       const sel = this._selectedArrow===a.id
-      const ck  = COLORS[a.color]?a.color:'default'
-      const c   = COLORS[ck]
+      const ck  = this._ARROW_COLORS[a.color]?a.color:'default'
+      const c   = this._ARROW_COLORS[ck]
 
       if (sel) {
         const glow=document.createElementNS('http://www.w3.org/2000/svg','path')
@@ -986,19 +1025,13 @@ const Canvas = {
     const bar = this._arrowBar; if (!bar) return
     bar.innerHTML = ''
 
-    const STROKE_COLORS = {
-      default: 'rgba(201,169,110,0.95)',
-      red:     'rgba(220,80,80,0.95)',
-      blue:    'rgba(80,140,255,0.95)',
-      green:   'rgba(80,195,120,0.95)',
-    }
     const cur = arrow.color || 'default'
 
     // Color swatches
-    for (const [key, clr] of Object.entries(STROKE_COLORS)) {
+    for (const [key, clrObj] of Object.entries(this._ARROW_COLORS)) {
       const dot = document.createElement('button')
       dot.title = key[0].toUpperCase() + key.slice(1)
-      dot.style.cssText = `width:13px;height:13px;border-radius:50%;background:${clr};border:2px solid ${cur===key?'#fff':'transparent'};cursor:pointer;padding:0;flex-shrink:0;outline:none;`
+      dot.style.cssText = `width:13px;height:13px;border-radius:50%;background:${clrObj.stroke.replace('0.8', '0.95')};border:2px solid ${cur===key?'#fff':'transparent'};cursor:pointer;padding:0;flex-shrink:0;outline:none;`
       dot.addEventListener('mousedown', e => { e.stopPropagation(); arrow.color=key; this._persist(); this._renderArrows() })
       bar.appendChild(dot)
     }
