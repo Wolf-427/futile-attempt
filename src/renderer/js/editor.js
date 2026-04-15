@@ -136,11 +136,16 @@ const Editor = {
       addProseMirrorPlugins() {
         let isOwnDispatch = false
         let rafId = null
+        let convergeCount = 0
 
         const PB_MIN_H = 4  // natural (unexpanded) height of a pageBreak node in px
 
-        // Helper to find the document position inside a node where it crosses the page limit
-        const findSplitPos = (view, start, node, limitY) => {
+        // Helper to find the document position inside a node where it crosses the page limit.
+        // prevSpacersInPara: sorted [{pos, height}] of prev-pass spacers inside this node —
+        //   used to strip their DOM shift from coords so the comparison is in natural coordinates.
+        // stripAbove: total prev-pass spacer height above this node's start offset.
+        // limitY: page boundary in natural coordinate space (no spacers).
+        const findSplitPos = (view, start, node, prevSpacersInPara, stripAbove, limitY) => {
           const wrap = document.getElementById('editor-page-wrap')
           const wrapRect = wrap.getBoundingClientRect()
           let low = 0, high = node.content.size
@@ -150,12 +155,20 @@ const Editor = {
             const mid = Math.floor((low + high) / 2)
             const pos = Math.min(start + 1 + mid, start + node.nodeSize - 1)
             const coords = view.coordsAtPos(pos)
-            // Calculate vertical position relative to the top of the usable page content
             if (!coords) { low = mid + 1; continue }
-            
-            const relativeY = coords.bottom - wrapRect.top - self.MARGIN
-            
-            if (relativeY > limitY + 1) { // 1px tolerance
+
+            // Strip prev-pass spacers that sit before this position so we work
+            // in natural coordinate space (no spacer offsets).
+            let prevBefore = 0
+            for (const s of prevSpacersInPara) {
+              if (s.pos < pos) prevBefore += s.height
+            }
+            const naturalY = coords.bottom - wrapRect.top - self.MARGIN - stripAbove - prevBefore
+            // coords.bottom is viewport-relative. Convert to wrap-relative and remove page-related offsets.
+            const pagedY = coords.bottom - (wrapRect.top + window.scrollY) - self.MARGIN
+            const naturalY = pagedY - stripAbove - prevBefore
+
+            if (naturalY > limitY + 1) { // 1px tolerance
               result = start + 1 + mid
               high = mid - 1
             } else {
@@ -194,11 +207,16 @@ const Editor = {
             if (!(dom instanceof HTMLElement)) return
 
             let stripAbove = 0, widgetsInside = 0
+            const prevSpacersInPara = []
             for (const [p, h] of Object.entries(prevWidgets)) {
               const pos = Number(p)
               if (pos <= offset) stripAbove += h
-              else if (pos > offset && pos < offset + node.nodeSize) widgetsInside += h
+              else if (pos > offset && pos < offset + node.nodeSize) {
+                widgetsInside += h
+                prevSpacersInPara.push({ pos, height: h })
+              }
             }
+            if (prevSpacersInPara.length > 1) prevSpacersInPara.sort((a, b) => a.pos - b.pos)
             for (const [p, h] of Object.entries(prevFills)) {
               if (Number(p) < offset) stripAbove += Math.max(0, h - PB_MIN_H)
             }
@@ -206,7 +224,9 @@ const Editor = {
             const style = window.getComputedStyle(dom)
             const mBot = parseFloat(style.marginBottom || 0)
             
-            const rawTop = dom.offsetTop - MARGIN
+            let _el = dom, _rawTop = 0
+            while (_el && _el !== wrap) { _rawTop += _el.offsetTop; _el = _el.offsetParent }
+            const rawTop = _rawTop - MARGIN
             const natTop = rawTop - stripAbove
             
             // Measure the actual rendered height of the node
@@ -237,16 +257,25 @@ const Editor = {
             while (pagedBottom > (pageNum + 1) * contentH + pageNum * gapH + 1 && safety < 10) {
               safety++
               const currentLimit = (pageNum + 1) * contentH + pageNum * gapH
+              const natLimit     = (pageNum + 1) * contentH
               
               if (pagedTop < currentLimit - 20 && node.isTextblock && node.content.size > 0) {
-                // Paragraph straddles the line: attempt to split between lines
-                const splitPos = findSplitPos(view, offset, node, currentLimit - newSpacerAcc)
+              // If the paragraph starts significantly before the page end, try to split it.
+              // 20px is roughly one line; we use this to avoid leaving a single "orphan" line.
+              if (pagedTop < currentLimit - 20 && node.isTextblock && node.content.size > 1) {
+                // Paragraph straddles the page boundary: split between lines.
+                // findSplitPos strips all prev-pass spacers from coords so limitY is
+                // in the same natural coordinate space — no adjustment needed here.
+                const splitPos = findSplitPos(view, offset, node, prevSpacersInPara, stripAbove, currentLimit)
                 if (splitPos) {
+                const splitPos = findSplitPos(view, offset, node, prevSpacersInPara, stripAbove, natLimit)
+                
+                if (splitPos && splitPos > offset + 1) {
                   newDecos.push(Decoration.widget(splitPos, makeSpacer(gapH, pageNum + 1, 0), { side: -1, key: 'as-' + splitPos }))
                   newWidgets[splitPos] = gapH
                   newSpacerAcc += gapH
                   pageNum++
-                  pagedBottom = pagedTop + rawH + (pageNum * gapH)
+                  pagedBottom = pagedTop + rawH + newSpacerAcc
                 } else {
                   const pushH = Math.max(0, currentLimit - pagedTop) + gapH
                   newDecos.push(Decoration.widget(offset, makeSpacer(pushH, pageNum + 1, currentLimit - pagedTop), { side: -1, key: 'as-' + offset }))
@@ -278,6 +307,7 @@ const Editor = {
             JSON.stringify(prevState.specs?.fills)   === JSON.stringify(newFills)
 
           if (!unchanged) {
+            convergeCount++
             isOwnDispatch = true
             view.dispatch(
               view.state.tr.setMeta(paginationKey, { decoSet, specs: { widgets: newWidgets, fills: newFills }, pages })
@@ -293,6 +323,19 @@ const Editor = {
             }
             const pc = document.getElementById('page-count')
             if (pc) pc.textContent = 'Page ' + pages
+
+            // The dispatch updated the decorations so the DOM will change on the next
+            // paint. Schedule a follow-up pass to re-measure and converge. Without this
+            // the layout is always one user-action behind because isOwnDispatch blocks
+            // the view.update re-trigger from our own dispatch.
+            if (convergeCount < 4) {
+              if (rafId) cancelAnimationFrame(rafId)
+              rafId = requestAnimationFrame(() => runLayout(view))
+            } else {
+              convergeCount = 0
+            }
+          } else {
+            convergeCount = 0
           }
         }
 
@@ -305,27 +348,13 @@ const Editor = {
               if (meta) return meta
               if (!tr.docChanged) return prev
 
-              // Map the positions of existing spacers/fills so runLayout sees them at correct offsets
-              const mapSpecs = (specs) => {
-                const newSpecs = { widgets: {}, fills: {} }
-                if (specs.widgets) {
-                  for (const [p, h] of Object.entries(specs.widgets)) {
-                    newSpecs.widgets[tr.mapping.map(Number(p))] = h
-                  }
-                }
-                if (specs.fills) {
-                  for (const [p, h] of Object.entries(specs.fills)) {
-                    newSpecs.fills[tr.mapping.map(Number(p))] = h
-                  }
-                }
-                return newSpecs
-              }
-
-              return { 
-                decoSet: prev.decoSet.map(tr.mapping, tr.doc), 
-                specs: mapSpecs(prev.specs), 
-                pages: prev.pages 
-              }
+              // On any content change reset decoSet and specs so runLayout always
+              // measures a clean DOM (no stale spacers from a previous layout).
+              // Stale mapped specs can pile up at position 0 after paste/replace,
+              // corrupt stripAbove for every paragraph, and silently suppress splits.
+              // The empty decoSet is never painted because requestAnimationFrame fires
+              // before the browser renders the next frame.
+              return { decoSet: DecorationSet.empty, specs: {}, pages: prev.pages }
             },
           },
           props: {
@@ -335,6 +364,9 @@ const Editor = {
             return {
               update(view, prevState) {
                 if (isOwnDispatch) return
+                // Skip selection-only changes — layout only depends on document content.
+                if (view.state.doc === prevState.doc) return
+                convergeCount = 0
                 if (rafId) cancelAnimationFrame(rafId)
                 rafId = requestAnimationFrame(() => runLayout(view))
               },
