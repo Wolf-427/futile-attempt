@@ -101,16 +101,31 @@ function setupDialogs() {
 
 // ── Export ────────────────────────────────────────────────────────────────────
 function setupExport() {
-  ipcMain.handle('export:pdf', async (_, filePath) => {
-    const options = {
-      marginsType: 0,
-      pageSize: 'A4',
-      printBackground: true,
-      displayHeaderFooter: false
+  ipcMain.handle('export:pdf', async (_, filePath, options = {}) => {
+    try {
+      // Force window background to white to prevent dark margins in the PDF
+      win.setBackgroundColor('#ffffff')
+
+      const pdfOptions = {
+        marginsType: 1, // 1 = No Margins (Uses CSS padding instead for 100% accuracy)
+        pageSize: options.pageSize || 'A4',
+        printBackground: true,
+        displayHeaderFooter: true,
+        headerTemplate: '<div></div>',
+        footerTemplate: `
+          <div style="font-family: system-ui, -apple-system, sans-serif; font-size: 10px; width: 100%; text-align: left; color: #999; padding: 0 0 15px 20px;">
+            <span class="pageNumber"></span>
+          </div>
+        `
+      }
+
+      const data = await win.webContents.printToPDF(pdfOptions)
+      await fs.writeFile(filePath, data)
+      return true
+    } finally {
+      // Restore the dark theme background
+      win.setBackgroundColor('#0f0f0d')
     }
-    const data = await win.webContents.printToPDF(options)
-    await fs.writeFile(filePath, data)
-    return true
   })
 
   ipcMain.handle('export:docx', async (_, filePath, htmlContent) => {

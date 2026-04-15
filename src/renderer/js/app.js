@@ -581,10 +581,13 @@ const App = {
       await api.fs.write(p, body)
       if (project.docOrder) {
         const newOrder = [...project.docOrder, p]
-        Store._data.projects = Store.get('projects').map(pj => 
+        Store._data.projects = Store.get('projects').map(pj =>
           pj.id === project.id ? { ...pj, docOrder: newOrder } : pj
         )
       }
+      // Invalidate sidebar cache so renderWorkspace does a full re-render
+      const _sc = document.getElementById('sidebar-container')
+      if (_sc) _sc.dataset.projectId = ''
       Store.set('docPath', p)
       Store.set('view', 'editor')
       close()
@@ -768,10 +771,14 @@ const App = {
       Store.save()
     }
 
+    // Invalidate sidebar cache so the next render re-reads from disk
+    const _sc = document.getElementById('sidebar-container')
+    if (_sc) _sc.dataset.projectId = ''
+
     if (Store.get('docPath') === path) {
       Store.set('docPath', null)
     } else {
-      this.render() // Force refresh sidebar
+      this.render()
     }
   },
 

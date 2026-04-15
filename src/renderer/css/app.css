@@ -166,11 +166,12 @@ textarea,input{font-family:var(--sans);}
 .editor-scroll{flex:1;overflow-y:auto;background:var(--bg);display:flex;flex-direction:column;align-items:center;padding:48px 24px 80px;}
 .editor-empty{flex:1;display:flex;align-items:center;justify-content:center;color:var(--tx3);font-style:italic;}
 .editor-status{display:flex;gap:16px;padding:5px 20px;border-top:1px solid var(--b0);background:var(--bg1);font-size:11px;color:var(--tx3);flex-shrink:0;}
-.ProseMirror{outline:none;font-family:var(--serif);font-size:18px;line-height:1.8;color:var(--tx);caret-color:var(--accent);}
-.ProseMirror h1{font-size:32px;font-weight:500;line-height:1.25;margin:0 0 24px;letter-spacing:-0.02em;}
-.ProseMirror h2{font-size:24px;font-weight:500;margin:40px 0 16px;}
-.ProseMirror h3{font-size:18px;font-weight:500;margin:32px 0 12px;font-style:italic;color:var(--tx2);}
-.ProseMirror p{margin:0 0 20px;}
+.ProseMirror{outline:none;font-family:var(--serif);font-size:18px;line-height:1.8;color:inherit;caret-color:var(--accent);}
+.ProseMirror h1{font-size:32px;font-weight:500;line-height:1.25;margin:0 0 24px !important;letter-spacing:-0.02em;}
+.ProseMirror h2{font-size:24px;font-weight:500;margin:0 0 24px !important;}
+.ProseMirror h3{font-size:18px;font-weight:500;margin:0 0 16px !important;font-style:italic;color:var(--tx2);}
+.ProseMirror p{margin:0 0 20px !important;}
+.ProseMirror > *, .ProseMirror p, .ProseMirror h1, .ProseMirror h2, .ProseMirror h3 { margin-top: 0 !important; }
 .ProseMirror p:last-child{margin-bottom:0;}
 .ProseMirror strong{font-weight:600;}
 .ProseMirror em{font-style:italic;}
@@ -244,6 +245,85 @@ hr.page-break{border:none;border-top:2px dashed rgba(201,169,110,0.3);margin:0;w
 .page-break-node{display:block;width:100%;pointer-events:none;user-select:none;position:relative;min-height:2px;}
 .page-break-line{position:absolute;top:50%;left:0;right:0;border-top:2px dashed rgba(201,169,110,0.35);transform:translateY(-50%);}
 .page-break-node.ProseMirror-selectednode .page-break-line{border-color:rgba(201,169,110,0.7);}
+/* Visible Margins Overlay */
+.editor-page-wrap.show-margins::after {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  pointer-events: none;
+  z-index: 100;
+  background-image: 
+    /* Vertical lines */
+    linear-gradient(to right, 
+      transparent 0,
+      transparent calc(var(--pg-m) - 1px), 
+      rgba(201,169,110,0.3) calc(var(--pg-m) - 1px), 
+      rgba(201,169,110,0.3) var(--pg-m), 
+      transparent var(--pg-m),
+      transparent calc(var(--pg-w) - var(--pg-m) - 1px),
+      rgba(201, 169, 110, 0.3) calc(var(--pg-w) - var(--pg-m) - 1px),
+      rgba(201, 169, 110, 0.3) calc(var(--pg-w) - var(--pg-m)),
+      transparent calc(var(--pg-w) - var(--pg-m))
+    ),
+    /* Horizontal lines */
+    linear-gradient(to bottom,
+      transparent calc(var(--pg-m) - 1px),
+      rgba(201, 169, 110, 0.3) calc(var(--pg-m) - 1px),
+      rgba(201, 169, 110, 0.3) var(--pg-m),
+      transparent var(--pg-m),
+      transparent calc(var(--pg-h) - var(--pg-m) - 1px),
+      rgba(201, 169, 110, 0.3) calc(var(--pg-h) - var(--pg-m) - 1px),
+      rgba(201, 169, 110, 0.3) calc(var(--pg-h) - var(--pg-m)),
+      transparent calc(var(--pg-h) - var(--pg-m)),
+      transparent var(--pg-h)
+    );
+  background-size: 100% calc(var(--pg-h) + var(--pg-gap));
+  background-repeat: repeat-y;
+}
+/* Formatting Characters Overlay */
+.editor-page-wrap.show-format-chars .ProseMirror p::after,
+.editor-page-wrap.show-format-chars .ProseMirror h1::after,
+.editor-page-wrap.show-format-chars .ProseMirror h2::after,
+.editor-page-wrap.show-format-chars .ProseMirror h3::after,
+.editor-page-wrap.show-format-chars .ProseMirror li::after {
+  content: "¶";
+  color: var(--accent);
+  opacity: 0.35;
+  padding-left: 4px;
+  font-weight: 400;
+  font-family: var(--sans);
+  pointer-events: none;
+  user-select: none;
+}
+/* Page Number in Editor */
+.page-number-indicator {
+  position: absolute;
+  left: -76px; /* Positioned in the center of the left margin gutter */
+  width: 60px;
+  text-align: left;
+  font-size: 12px;
+  color: var(--tx3);
+  font-family: var(--mono);
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+  z-index: 10;
+  display: block;
+  height: 0; 
+  line-height: 1;
+  margin-top: -0.5em; /* Center vertically on the line math */
+  overflow: visible;
+}
+
+/* Fix "Top margin too big" on new pages by removing double-spacing */
+.page-auto-spacer + *, 
+.page-break-node + *, 
+.page-break-spacer + *,
+.page-auto-spacer + p,
+.page-auto-spacer + h1,
+.page-auto-spacer + h2 {
+  margin-top: 0 !important;
+}
 /* Auto-spacer (decoration widget) */
 .page-auto-spacer{display:block;pointer-events:none;user-select:none;}
 /* ── Splash screen ─────────────────────────────────────────────────────────── */
@@ -631,33 +711,75 @@ input[type=range].editor-font-size::-webkit-slider-thumb { -webkit-appearance: n
 
 /* ── Print/Export Styles ───────────────────────────────────────────────────── */
 @media print {
+  html, body, #app { height: auto !important; overflow: visible !important; }
   .titlebar, .sidebar, .editor-toolbar, .editor-status, .nav-group, .spacer { display: none !important; }
-  .workspace, .body, .main, .editor-scroll { display: block !important; padding: 0 !important; margin: 0 !important; overflow: visible !important; }
+  .workspace, .body, .main, .editor, .editor-scroll { display: block !important; padding: 0 !important; margin: 0 !important; overflow: visible !important; height: auto !important; }
   .editor-page-wrap {
     box-shadow: none !important;
     border: none !important;
-    width: 794px !important; /* Force A4 width on print */
+    width: 100% !important;
     margin: 0 !important;
-    background-image: none !important; /* Hide lines on export */
+    padding: 0 !important;
+    background-image: none !important;
     background: white !important;
+    min-height: 0 !important;
+    height: auto !important;
   }
-  body { background: white !important; color: black !important; }
+  html, body { 
+    height: auto !important;
+    background: #ffffff !important; 
+    background-color: #ffffff !important; 
+    color: #000000 !important; 
+    color-scheme: light !important; 
+  }
   .page-auto-spacer, .page-break-spacer { display: none !important; }
   .page-break-node { height: 0 !important; min-height: 0 !important; page-break-after: always; }
   .page-break-line { display: none !important; }
   hr.page-break { page-break-after: always; display: block; }
+  .ProseMirror p.is-empty::before { display: none !important; }
 }
 
 /* Force print styles during PDF generation */
-.is-exporting .titlebar, .is-exporting .sidebar, .is-exporting .editor-toolbar, .is-exporting .editor-status { display: none !important; }
-.is-exporting .main { width: 100vw !important; height: 100vh !important; }
-.is-exporting .editor-scroll { background: white !important; padding: 0 !important; }
+.is-exporting .titlebar,
+.is-exporting .sidebar,
+.is-exporting .editor-toolbar,
+.is-exporting .editor-status,
+.is-exporting .nav-group,
+.is-exporting .spacer {
+  display: none !important;
+}
+
+html.is-exporting,
+body.is-exporting,
+.is-exporting #app,
+.is-exporting .workspace,
+.is-exporting .body,
+.is-exporting .main,
+.is-exporting .editor,
+.is-exporting .editor-scroll {
+  display: block !important;
+  height: auto !important;
+  overflow: visible !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  background: #ffffff !important;
+  background-color: #ffffff !important;
+  background-image: none !important;
+  transition: none !important;
+  color-scheme: light !important;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
 .is-exporting .editor-page-wrap {
   background: white !important;
+  background-image: none !important;
   color: black !important;
   border: none !important;
   box-shadow: none !important;
   width: 100% !important;
+  min-height: 0 !important;
+  height: auto !important;
 }
 /* Spacers are layout-only — never appear in print/export */
 .is-exporting .page-auto-spacer,
@@ -674,4 +796,23 @@ input[type=range].editor-font-size::-webkit-slider-thumb { -webkit-appearance: n
 .is-exporting .ProseMirror p {
   color: black !important;
 }
+.is-exporting .ProseMirror p.is-empty::before { display: none !important; }
 .text-fmt-btn:hover { background: rgba(255,255,255,0.08); color: var(--tx); }
+
+/* Ensure the root HTML is strictly white for the PDF engine */
+html.is-exporting {
+  background-color: white !important;
+  background: white !important;
+  height: auto !important;
+  transition: none !important;
+  color-scheme: light !important;
+}
+
+.is-exporting .page-number-indicator { display: none !important; }
+.is-exporting .show-format-chars .ProseMirror p::after,
+.is-exporting .show-format-chars .ProseMirror h1::after,
+.is-exporting .show-format-chars .ProseMirror h2::after,
+.is-exporting .show-format-chars .ProseMirror h3::after,
+.is-exporting .show-format-chars .ProseMirror li::after {
+  display: none !important;
+}

@@ -4,6 +4,8 @@ const Store = {
     boardFile: 'master.json', boardStack: [],
     view: 'editor', sidebar: true,
     theme: 'dark', paperTheme: 'auto',
+    visibleMargins: false,
+    showFormattingChars: false,
     git: { dirty: false, branch: 'main', syncing: false, error: null }
   },
   _listeners: [],
@@ -57,6 +59,8 @@ const Store = {
         if (d.docPath) this._data.docPath = d.docPath
         if (d.theme) this._data.theme = d.theme
         if (d.paperTheme) this._data.paperTheme = d.paperTheme
+        if (d.visibleMargins !== undefined) this._data.visibleMargins = d.visibleMargins
+        if (d.showFormattingChars !== undefined) this._data.showFormattingChars = d.showFormattingChars
       }
     } catch(e) { console.error('Store loadSync error:', e) }
   },
@@ -91,6 +95,8 @@ const Store = {
           boardFile: this._data.boardFile,
           theme:     this._data.theme,
           paperTheme: this._data.paperTheme,
+          visibleMargins: this._data.visibleMargins,
+          showFormattingChars: this._data.showFormattingChars,
         }))
       } catch(e) { console.error('Store save error:', e) }
     }, 100)

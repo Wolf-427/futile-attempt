@@ -20,7 +20,7 @@ const Editor = {
     letter: { width: 816,  height: 1056 },
     custom: { width: 794,  height: 1123 },
   },
-  MARGIN:   80,
+  MARGIN:   96, // Standard 1-inch margin (at 96 DPI)
   PAGE_GAP: 32,
 
   FONT_SIZES: [8,9,10,11,12,14,16,18,20,22,24,26,28,36,48,72],
@@ -49,6 +49,7 @@ const Editor = {
     this._initTipTap()
     this._buildToolbar()
     this._applyPageSize()
+    Store.sub(['visibleMargins', 'showFormattingChars'], () => this._applyPageSize())
   },
 
   // ── TipTap + Extensions ────────────────────────────────────────────────────
@@ -70,7 +71,7 @@ const Editor = {
       draggable: false,
       parseHTML() { return [{ tag: 'div[data-type="pageBreak"]' }] },
       renderHTML({ HTMLAttributes }) {
-        return ['div', { 'data-type': 'pageBreak', class: 'page-break-node', ...HTMLAttributes }, 0]
+        return ['div', { 'data-type': 'pageBreak', class: 'page-break-node', ...HTMLAttributes }]
       },
       addKeyboardShortcuts() {
         return { 'Mod-Enter': () => this.editor.commands.insertPageBreak() }
@@ -90,12 +91,23 @@ const Editor = {
           const line = document.createElement('div')
           line.className = 'page-break-line'
           wrap.appendChild(line)
+
+          const num = document.createElement('span')
+          num.className = 'page-number-indicator'
+          wrap.appendChild(num)
+
           return {
             dom: wrap,
             stopEvent: () => true,
             ignoreMutation: () => true,
-            // setHeight called by the pagination plugin
-            setHeight(h) { wrap.style.height = Math.max(0, h) + 'px' },
+            setHeight(h, pageNum, remaining = 0) { 
+              wrap.style.height = Math.max(0, h) + 'px'
+              if (pageNum && num) {
+                num.textContent = pageNum
+                // Position at the vertical center of the bottom margin area
+                num.style.top = (remaining + self.MARGIN / 2) + 'px'
+              }
+            },
           }
         }
       },
@@ -104,11 +116,18 @@ const Editor = {
     // ── Pagination plugin ───────────────────────────────────────────────────
     const paginationKey = new PluginKey('pagination')
 
-    const makeSpacer = (h) => {
+    const makeSpacer = (h, num, remaining = 0) => {
       const d = document.createElement('div')
       d.className = 'page-auto-spacer'
       d.contentEditable = 'false'
-      d.style.cssText = `height:${h}px;display:block;pointer-events:none;user-select:none;flex-shrink:0;`
+      d.style.cssText = `height:${h}px;display:block;pointer-events:none;user-select:none;position:relative;`
+      if (num) {
+        const n = document.createElement('span')
+        n.className = 'page-number-indicator'
+        n.textContent = num
+        n.style.top = (remaining + self.MARGIN / 2) + 'px'
+        d.appendChild(n)
+      }
       return d
     }
 
@@ -120,23 +139,47 @@ const Editor = {
 
         const PB_MIN_H = 4  // natural (unexpanded) height of a pageBreak node in px
 
+        // Helper to find the document position inside a node where it crosses the page limit
+        const findSplitPos = (view, start, node, limitY) => {
+          const wrap = document.getElementById('editor-page-wrap')
+          const wrapRect = wrap.getBoundingClientRect()
+          let low = 0, high = node.content.size
+          let result = null
+
+          while (low <= high) {
+            const mid = Math.floor((low + high) / 2)
+            const pos = Math.min(start + 1 + mid, start + node.nodeSize - 1)
+            const coords = view.coordsAtPos(pos)
+            // Calculate vertical position relative to the top of the usable page content
+            if (!coords) { low = mid + 1; continue }
+            
+            const relativeY = coords.bottom - wrapRect.top - self.MARGIN
+            
+            if (relativeY > limitY + 1) { // 1px tolerance
+              result = start + 1 + mid
+              high = mid - 1
+            } else {
+              low = mid + 1
+            }
+          }
+          return result
+        }
+
         const runLayout = (view) => {
           rafId = null
           const pg = self._pg
           if (!pg) return
 
+          const wrap = document.getElementById('editor-page-wrap')
+          const wrapRect = wrap.getBoundingClientRect()
           const MARGIN   = self.MARGIN
           const PAGE_GAP = self.PAGE_GAP
           const contentH = pg.height - 2 * MARGIN  // usable px per page (e.g. 963)
-          const gapH     = PAGE_GAP + 2 * MARGIN    // inter-page gap in content coords (192)
+          const fullPageH = pg.height + PAGE_GAP   // height of one page "tile" including gap
+          const gapH     = PAGE_GAP + 2 * MARGIN   // total height of the gap between content areas
 
-          const editorDom    = view.dom          // the .ProseMirror element
-          const editorOffset = editorDom.offsetTop  // = MARGIN (wrap top padding)
-
-          // Previous state — widget auto-spacers (pos→height) and pb fills (pos→height).
-          // Both are in the prevState so we can strip their effect from DOM measurements.
           const prevState    = paginationKey.getState(view.state)
-          const prevWidgets  = prevState?.specs?.widgets || {}  // auto-spacer widget heights
+          const prevWidgets  = prevState?.specs?.widgets || {}
           const prevFills    = prevState?.specs?.fills   || {}  // pageBreak fill heights
 
           const newDecos    = []
@@ -144,57 +187,90 @@ const Editor = {
           const newFills    = {}
           let pageNum       = 0
           let newSpacerAcc  = 0  // cumulative new spacers added so far this pass
-
-          const pagedLimit = () => (pageNum + 1) * contentH + pageNum * gapH
+          let lastPagedBottom = 0
 
           view.state.doc.forEach((node, offset) => {
             const dom = view.nodeDOM(offset)
             if (!(dom instanceof HTMLElement)) return
 
-            // rawTop: measured DOM position relative to editor top.
-            // It includes effects of: prev widget spacers above + prev pb fills above.
-            // We strip both to get the "natural" (un-paged) position of this block.
-            let stripAbove = 0
+            let stripAbove = 0, widgetsInside = 0
             for (const [p, h] of Object.entries(prevWidgets)) {
-              if (Number(p) <= offset) stripAbove += h
+              const pos = Number(p)
+              if (pos <= offset) stripAbove += h
+              else if (pos > offset && pos < offset + node.nodeSize) widgetsInside += h
             }
             for (const [p, h] of Object.entries(prevFills)) {
-              // strip (fill - min) because the min height is "real" content height
               if (Number(p) < offset) stripAbove += Math.max(0, h - PB_MIN_H)
             }
 
-            const rawTop    = dom.offsetTop - editorOffset
-            const rawH      = dom.offsetHeight
-            const natTop    = rawTop - stripAbove
-            const natBottom = natTop + rawH  // note: pb rawH = prevFill, see below
+            const style = window.getComputedStyle(dom)
+            const mBot = parseFloat(style.marginBottom || 0)
+            
+            const rawTop = dom.offsetTop - MARGIN
+            const natTop = rawTop - stripAbove
+            
+            // Measure the actual rendered height of the node
+            const rect = dom.getBoundingClientRect()
+            const rawH = rect.height + mBot - widgetsInside
+            
+            let pagedTop    = natTop    + newSpacerAcc
+            let pagedBottom = pagedTop  + rawH
+            lastPagedBottom = pagedBottom
 
             if (node.type.name === 'pageBreak') {
-              const pagedTop  = natTop + newSpacerAcc
-              const remaining = Math.max(0, pagedLimit() - pagedTop)
-              const fillH     = Math.max(PB_MIN_H, remaining + PAGE_GAP + MARGIN)
+              const remaining = Math.max(0, ((pageNum + 1) * contentH + pageNum * gapH) - pagedTop)
+              const fillH     = Math.max(PB_MIN_H, remaining + gapH)
 
-              dom.style.height = fillH + 'px'
+              const nodeView = view.renderer?.nodeViews?.get(dom) || dom.__nodeView
+              if (nodeView?.setHeight) nodeView.setHeight(fillH, pageNum + 1, remaining)
+              else dom.style.height = fillH + 'px'
+
               newFills[offset] = fillH
-              // The fill beyond PB_MIN_H acts as a spacer for subsequent blocks
               newSpacerAcc += fillH - PB_MIN_H
               pageNum++
+              lastPagedBottom = pagedTop + fillH
               return
             }
 
-            const pagedTop    = natTop    + newSpacerAcc
-            const pagedBottom = natBottom + newSpacerAcc
-
-            if (pagedBottom > pagedLimit()) {
-              const remaining = Math.max(0, pagedLimit() - pagedTop)
-              const insertH   = remaining + gapH
-              newDecos.push(Decoration.widget(offset, makeSpacer(insertH), { side: -1, key: 'as-' + offset }))
-              newWidgets[offset] = insertH
-              newSpacerAcc += insertH
-              pageNum++
+            // Use a loop to split a single paragraph across 2 or more pages if necessary
+            let safety = 0
+            while (pagedBottom > (pageNum + 1) * contentH + pageNum * gapH + 1 && safety < 10) {
+              safety++
+              const currentLimit = (pageNum + 1) * contentH + pageNum * gapH
+              
+              if (pagedTop < currentLimit - 20 && node.isTextblock && node.content.size > 0) {
+                // Paragraph straddles the line: attempt to split between lines
+                const splitPos = findSplitPos(view, offset, node, currentLimit - newSpacerAcc)
+                if (splitPos) {
+                  newDecos.push(Decoration.widget(splitPos, makeSpacer(gapH, pageNum + 1, 0), { side: -1, key: 'as-' + splitPos }))
+                  newWidgets[splitPos] = gapH
+                  newSpacerAcc += gapH
+                  pageNum++
+                  pagedBottom = pagedTop + rawH + (pageNum * gapH)
+                } else {
+                  const pushH = Math.max(0, currentLimit - pagedTop) + gapH
+                  newDecos.push(Decoration.widget(offset, makeSpacer(pushH, pageNum + 1, currentLimit - pagedTop), { side: -1, key: 'as-' + offset }))
+                  newWidgets[offset] = pushH
+                  newSpacerAcc += pushH
+                  pageNum++; pagedBottom = pagedTop + rawH + pushH; break
+                }
+              } else {
+                const pushH = Math.max(0, currentLimit - pagedTop) + gapH
+                newDecos.push(Decoration.widget(offset, makeSpacer(pushH, pageNum + 1, currentLimit - pagedTop), { side: -1, key: 'as-' + offset }))
+                newWidgets[offset] = pushH
+                newSpacerAcc += pushH
+                pageNum++; pagedBottom = pagedTop + rawH + pushH; break
+              }
             }
+            lastPagedBottom = pagedBottom
           })
 
-          const pages     = pageNum + 1
+          const lastPageNum = pageNum + 1
+          const finalRemaining = Math.max(0, ((pageNum + 1) * contentH + pageNum * gapH) - lastPagedBottom)
+          const footerSpacer = makeSpacer(finalRemaining + MARGIN, lastPageNum, finalRemaining)
+          newDecos.push(Decoration.widget(view.state.doc.content.size, footerSpacer, { side: 1, key: 'footer-last' }))
+
+          const pages = lastPageNum
           const decoSet   = DecorationSet.create(view.state.doc, newDecos)
           const unchanged = prevState &&
             prevState.pages === pages &&
@@ -211,7 +287,7 @@ const Editor = {
             // Update UI
             const wrap = document.getElementById('editor-page-wrap')
             if (wrap) {
-              const reqH = pages * (pg.height + PAGE_GAP) - PAGE_GAP
+              const reqH = pages * fullPageH - PAGE_GAP
               wrap.style.minHeight = reqH + 'px'
               wrap.style.height = 'auto'
             }
@@ -227,7 +303,29 @@ const Editor = {
             apply(tr, prev) {
               const meta = tr.getMeta(paginationKey)
               if (meta) return meta
-              return { decoSet: prev.decoSet.map(tr.mapping, tr.doc), specs: prev.specs, pages: prev.pages }
+              if (!tr.docChanged) return prev
+
+              // Map the positions of existing spacers/fills so runLayout sees them at correct offsets
+              const mapSpecs = (specs) => {
+                const newSpecs = { widgets: {}, fills: {} }
+                if (specs.widgets) {
+                  for (const [p, h] of Object.entries(specs.widgets)) {
+                    newSpecs.widgets[tr.mapping.map(Number(p))] = h
+                  }
+                }
+                if (specs.fills) {
+                  for (const [p, h] of Object.entries(specs.fills)) {
+                    newSpecs.fills[tr.mapping.map(Number(p))] = h
+                  }
+                }
+                return newSpecs
+              }
+
+              return { 
+                decoSet: prev.decoSet.map(tr.mapping, tr.doc), 
+                specs: mapSpecs(prev.specs), 
+                pages: prev.pages 
+              }
             },
           },
           props: {
@@ -362,6 +460,17 @@ const Editor = {
       '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
       ()=>t._showExportOptions(), null, 'Export'
     ))
+    tb.appendChild(sep())
+    tb.appendChild(btn(
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="2 2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>',
+      ()=>Store.set('visibleMargins', !Store.get('visibleMargins')), 
+      ()=>Store.get('visibleMargins'), 'Toggle visible margins'
+    ))
+    tb.appendChild(btn(
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 4v16"/><path d="M17 4v16"/><path d="M19 4H9.5a4.5 4.5 0 0 0 0 9H13"/></svg>',
+      ()=>Store.set('showFormattingChars', !Store.get('showFormattingChars')),
+      ()=>Store.get('showFormattingChars'), 'Toggle formatting characters'
+    ))
   },
 
   _setFontSize(v) {
@@ -397,6 +506,12 @@ const Editor = {
     wrap.classList.toggle('paper-light', isLight)
     wrap.classList.toggle('paper-dark',  isDark)
 
+    const showMargins = Store.get('visibleMargins')
+    wrap.classList.toggle('show-margins', !!showMargins)
+
+    const showFormattingChars = Store.get('showFormattingChars')
+    wrap.classList.toggle('show-format-chars', !!showFormattingChars)
+
     const tileH = pg.height + this.PAGE_GAP
     wrap.style.width           = pg.width + 'px'
     wrap.style.minHeight       = pg.height + 'px'
@@ -405,6 +520,12 @@ const Editor = {
     wrap.style.position        = 'relative'
     wrap.style.boxShadow       = 'none'
     wrap.style.border          = 'none'
+
+    // Set CSS variables for the margin overlay
+    wrap.style.setProperty('--pg-w', pg.width + 'px')
+    wrap.style.setProperty('--pg-h', pg.height + 'px')
+    wrap.style.setProperty('--pg-m', this.MARGIN + 'px')
+    wrap.style.setProperty('--pg-gap', this.PAGE_GAP + 'px')
 
     const cs        = getComputedStyle(wrap)
     const paperBg   = cs.getPropertyValue('--paper-bg').trim()   || '#ffffff'
@@ -424,7 +545,7 @@ const Editor = {
 
     let styleEl = document.getElementById('editor-page-style')
     if (!styleEl) { styleEl=document.createElement('style'); styleEl.id='editor-page-style'; document.head.appendChild(styleEl) }
-    styleEl.textContent = `@page{size:${pg.width}px ${pg.height}px;margin:${this.MARGIN}px}`
+    styleEl.textContent = `@page{size:${pg.width}px ${pg.height}px;margin:0}`
 
     // Trigger a pagination re-layout now that pg changed
     if (this._tt) {
@@ -547,9 +668,18 @@ const Editor = {
       close()
       const p=await api.dialog.save('Export PDF',name+'.pdf',[{name:'PDF',extensions:['pdf']}])
       if(!p) return
-      document.body.classList.add('is-exporting')
-      try{await api.export.pdf(p);alert('Exported!')}catch(e){alert('Failed: '+e.message)}
-      finally{document.body.classList.remove('is-exporting')}
+
+      const pg = await this.getPageSize()
+      document.documentElement.classList.add('is-exporting')
+
+      // Give the DOM more time to reflow and bypass any background transitions
+      setTimeout(async () => {
+        try {
+          await api.export.pdf(p, { pageSize: pg.preset.toUpperCase() })
+          alert('Exported!')
+        } catch(e) { console.error(e); alert('Failed: ' + e.message) }
+        finally { document.documentElement.classList.remove('is-exporting') }
+      }, 350)
     }
     ov.querySelector('#export-docx-btn').onclick=async()=>{
       close()
