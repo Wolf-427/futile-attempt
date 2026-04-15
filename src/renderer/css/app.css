@@ -240,6 +240,12 @@ textarea,input{font-family:var(--sans);}
 .editor-page-sel:focus{border-color:var(--accent);}
 hr.page-break{border:none;border-top:2px dashed rgba(201,169,110,0.3);margin:0;width:100%;cursor:default;pointer-events:none;}
 .page-break-spacer{display:block;pointer-events:none;user-select:none;}
+/* TipTap page-break node */
+.page-break-node{display:block;width:100%;pointer-events:none;user-select:none;position:relative;min-height:2px;}
+.page-break-line{position:absolute;top:50%;left:0;right:0;border-top:2px dashed rgba(201,169,110,0.35);transform:translateY(-50%);}
+.page-break-node.ProseMirror-selectednode .page-break-line{border-color:rgba(201,169,110,0.7);}
+/* Auto-spacer (decoration widget) */
+.page-auto-spacer{display:block;pointer-events:none;user-select:none;}
 /* ── Splash screen ─────────────────────────────────────────────────────────── */
 .splash { display:flex; flex-direction:column; height:100%; background:var(--bg); }
 .splash-drag { -webkit-app-region:drag; height:var(--th); flex-shrink:0; }
@@ -637,6 +643,8 @@ input[type=range].editor-font-size::-webkit-slider-thumb { -webkit-appearance: n
   }
   body { background: white !important; color: black !important; }
   .page-auto-spacer, .page-break-spacer { display: none !important; }
+  .page-break-node { height: 0 !important; min-height: 0 !important; page-break-after: always; }
+  .page-break-line { display: none !important; }
   hr.page-break { page-break-after: always; display: block; }
 }
 
@@ -654,6 +662,8 @@ input[type=range].editor-font-size::-webkit-slider-thumb { -webkit-appearance: n
 /* Spacers are layout-only — never appear in print/export */
 .is-exporting .page-auto-spacer,
 .is-exporting .page-break-spacer { display: none !important; }
+.is-exporting .page-break-node { height: 0 !important; min-height: 0 !important; page-break-after: always; }
+.is-exporting .page-break-line { display: none !important; }
 .is-exporting hr.page-break { page-break-after: always; display: block; }
 /* Ensure all text elements inside the editor are forced to black during export */
 .is-exporting .ProseMirror,
