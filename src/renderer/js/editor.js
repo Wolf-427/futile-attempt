@@ -163,7 +163,6 @@ const Editor = {
             for (const s of prevSpacersInPara) {
               if (s.pos < pos) prevBefore += s.height
             }
-            const naturalY = coords.bottom - wrapRect.top - self.MARGIN - stripAbove - prevBefore
             // coords.bottom is viewport-relative. Convert to wrap-relative and remove page-related offsets.
             const pagedY = coords.bottom - (wrapRect.top + window.scrollY) - self.MARGIN
             const naturalY = pagedY - stripAbove - prevBefore
@@ -252,22 +251,22 @@ const Editor = {
               return
             }
 
-            // Use a loop to split a single paragraph across 2 or more pages if necessary
+            // 1. Synchronize pageNum with where the node actually starts.
+            // This is critical for long documents to ensure we're checking against the correct page boundary.
+            while (pagedTop > (pageNum + 1) * contentH + pageNum * gapH + 1) {
+              pageNum++
+            }
+
+            // 2. Handle page overflows: Split paragraphs between lines or push whole blocks.
             let safety = 0
             while (pagedBottom > (pageNum + 1) * contentH + pageNum * gapH + 1 && safety < 10) {
               safety++
               const currentLimit = (pageNum + 1) * contentH + pageNum * gapH
               const natLimit     = (pageNum + 1) * contentH
+              const isAtPageTop  = pagedTop <= (pageNum * contentH + pageNum * gapH) + 1
               
-              if (pagedTop < currentLimit - 20 && node.isTextblock && node.content.size > 0) {
-              // If the paragraph starts significantly before the page end, try to split it.
-              // 20px is roughly one line; we use this to avoid leaving a single "orphan" line.
-              if (pagedTop < currentLimit - 20 && node.isTextblock && node.content.size > 1) {
-                // Paragraph straddles the page boundary: split between lines.
-                // findSplitPos strips all prev-pass spacers from coords so limitY is
-                // in the same natural coordinate space — no adjustment needed here.
-                const splitPos = findSplitPos(view, offset, node, prevSpacersInPara, stripAbove, currentLimit)
-                if (splitPos) {
+              // If it's a textblock and not already at the top of a page, try to split it between lines.
+              if (!isAtPageTop && node.isTextblock && node.content.size > 1) {
                 const splitPos = findSplitPos(view, offset, node, prevSpacersInPara, stripAbove, natLimit)
                 
                 if (splitPos && splitPos > offset + 1) {
@@ -276,20 +275,16 @@ const Editor = {
                   newSpacerAcc += gapH
                   pageNum++
                   pagedBottom = pagedTop + rawH + newSpacerAcc
-                } else {
-                  const pushH = Math.max(0, currentLimit - pagedTop) + gapH
-                  newDecos.push(Decoration.widget(offset, makeSpacer(pushH, pageNum + 1, currentLimit - pagedTop), { side: -1, key: 'as-' + offset }))
-                  newWidgets[offset] = pushH
-                  newSpacerAcc += pushH
-                  pageNum++; pagedBottom = pagedTop + rawH + pushH; break
+                  continue // Re-check pagedBottom in case the paragraph spans another page
                 }
-              } else {
-                const pushH = Math.max(0, currentLimit - pagedTop) + gapH
-                newDecos.push(Decoration.widget(offset, makeSpacer(pushH, pageNum + 1, currentLimit - pagedTop), { side: -1, key: 'as-' + offset }))
-                newWidgets[offset] = pushH
-                newSpacerAcc += pushH
-                pageNum++; pagedBottom = pagedTop + rawH + pushH; break
               }
+              
+              // Fallback: Push the whole node (or remainder) to the next page.
+              const pushH = Math.max(0, currentLimit - pagedTop) + gapH
+              newDecos.push(Decoration.widget(offset, makeSpacer(pushH, pageNum + 1, currentLimit - pagedTop), { side: -1, key: 'as-' + offset }))
+              newWidgets[offset] = pushH
+              newSpacerAcc += pushH
+              pageNum++; pagedBottom = pagedTop + rawH + pushH; break
             }
             lastPagedBottom = pagedBottom
           })
@@ -308,11 +303,37 @@ const Editor = {
 
           if (!unchanged) {
             convergeCount++
+
+            // Compute the net change in spacer height above the cursor BEFORE
+            // dispatching, so we can compensate scrollTop in the same task and
+            // prevent the viewport from jumping when spacers are added/removed.
+            const cursorPos = view.state.selection.anchor
+            let scrollDelta = 0
+            for (const [p, h] of Object.entries(newWidgets)) {
+              if (Number(p) < cursorPos) scrollDelta += h
+            }
+            for (const [p, h] of Object.entries(prevWidgets)) {
+              if (Number(p) < cursorPos) scrollDelta -= h
+            }
+            for (const [p, h] of Object.entries(newFills)) {
+              if (Number(p) < cursorPos) scrollDelta += h - PB_MIN_H
+            }
+            for (const [p, h] of Object.entries(prevFills)) {
+              if (Number(p) < cursorPos) scrollDelta -= h - PB_MIN_H
+            }
+
             isOwnDispatch = true
             view.dispatch(
               view.state.tr.setMeta(paginationKey, { decoSet, specs: { widgets: newWidgets, fills: newFills }, pages })
             )
             isOwnDispatch = false
+
+            // Apply the scroll correction now — same task, before the browser paints,
+            // so the insertion of spacers above the cursor is invisible to the user.
+            if (scrollDelta !== 0) {
+              const scrollEl = document.getElementById('editor-scroll')
+              if (scrollEl) scrollEl.scrollTop += scrollDelta
+            }
 
             // Update UI
             const wrap = document.getElementById('editor-page-wrap')
