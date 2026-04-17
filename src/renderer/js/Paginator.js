@@ -6,8 +6,8 @@ export class Paginator {
     this.config = {
       pageHeight: 1123,
       margin: 96,
-      pageGap: 48,
-      contentHeight: 931
+      pageGap: 32, // Match Editor.PAGE_GAP to prevent background/text drift
+      contentHeight: 931 
     };
     this.engine = new LayoutEngine(this.config);
   }
@@ -24,9 +24,11 @@ export class Paginator {
     const { Decoration, DecorationSet } = window.Tiptap;
     const doc = this.editor.instance.state.doc;
     const view = this.editor.instance.view;
-    
+
     // 1. Clear existing decorations. 
     this.editor.setDecorations(DecorationSet.empty);
+    // Force a browser reflow to ensure we are measuring a "flat" document
+    void view.dom.offsetHeight; 
 
     // 2. Measure coordinates while the document is "flat".
     // Note: ProseMirror usually handles the DOM reflow synchronously on state change,
@@ -66,8 +68,14 @@ export class Paginator {
       const page = document.createElement('div');
       page.className = 'page-tile';
       page.style.height = this.config.pageHeight + 'px';
-      page.style.marginBottom = `${this.config.pageGap}px`;
+      page.style.marginBottom = this.config.pageGap + 'px';
+      page.setAttribute('data-page-number', i + 1);
       desk.appendChild(page);
     }
+     // Ensure the container expands to fit the desk so scrolling works correctly
+    const totalDeskHeight = (pageCount * this.config.pageHeight) + ((pageCount - 1) * this.config.pageGap);
+    wrap.style.minHeight = totalDeskHeight + 'px';
+
+    
   }
 }

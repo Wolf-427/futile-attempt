@@ -16,41 +16,82 @@ export class LayoutEngine {
     const editorRect = view.dom.getBoundingClientRect();
     const editorTop = editorRect.top;
 
+    const EPSILON = 1; 
     let pageIndex = 0;
-    
-    // In a 'flat' document (no spacers), the first page content 
-    // ends exactly at config.contentHeight.
-    let currentBoundary = this.config.contentHeight;
+    let accumulatedOffset = 0;
 
     doc.forEach((node, offset) => {
       if (!node.isBlock) return;
 
-      // We measure the bottom of the block
-      const endCoords = view.coordsAtPos(offset + node.nodeSize - 1);
-      
-      // Normalize the coordinate relative to the editor's top
-      const nodeBottom = endCoords.bottom - editorTop;
+      const dom = view.nodeDOM(offset);
+      if (!dom || !(dom instanceof HTMLElement)) return;
 
-      const isManualBreak = node.type.name === 'horizontalRule';
-      const isOverflowing = nodeBottom > currentBoundary;
+      const rect = dom.getBoundingClientRect();
+      let nodeTop = Math.floor(rect.top - editorTop);
+      let nodeBottom = Math.floor(rect.bottom - editorTop);
 
-      if (isOverflowing || isManualBreak) {
-        let splitPos = offset;
-
-        // Sophisticated Line-Level Splitting
-        if (!isManualBreak && node.isTextblock && node.type.name === 'paragraph') {
-          // Find the last character that fits within the current page boundary
-          splitPos = this.findSplitPoint(view, offset, offset + node.nodeSize, editorTop + currentBoundary);
+      // We use a while loop to handle nodes that are longer than a single page
+      while (true) {
+        // The boundary is the absolute point where Page N's content ends.
+        // Page 1 ends at (Margin + ContentHeight).
+        const currentBoundary = Math.floor(this.config.margin + (this.config.contentHeight * (pageIndex + 1)));
+        
+        let shouldBreakBefore = false;
+        if (node.type.name === 'heading' && nodeBottom < (currentBoundary + EPSILON)) {
+          const nextNode = doc.nodeAt(offset + node.nodeSize);
+          if (nextNode && nextNode.isBlock) {
+            const nextDom = view.nodeDOM(offset + node.nodeSize);
+            if (nextDom && nextDom instanceof HTMLElement) {
+              const nextRect = nextDom.getBoundingClientRect();
+              if (Math.floor(nextRect.bottom - editorTop) > (currentBoundary + EPSILON)) shouldBreakBefore = true;
+            }
+          }
         }
 
-        breaks.push({
-          pos: splitPos,
-          height: this.config.pageGap + (this.config.margin * 2),
-        });
+        const isManualBreak = node.type.name === 'horizontalRule';
+        const isOverflowing = (nodeBottom > currentBoundary + EPSILON) || shouldBreakBefore;
 
-        pageIndex++;
-        // The next page boundary is exactly one contentHeight further down in the flat doc.
-        currentBoundary += this.config.contentHeight;
+        if (isOverflowing || isManualBreak) {
+          let splitPos = offset;
+          let splitY = nodeTop;
+
+          if (!isManualBreak && !shouldBreakBefore && node.isTextblock) {
+            const targetY = editorTop + currentBoundary;
+            const firstLineCoords = view.coordsAtPos(offset);
+            
+            // Use the absolute editorTop to normalize first line check
+            if (Math.floor(firstLineCoords.bottom - editorTop) < (currentBoundary - 2)) {
+              splitPos = this.findSplitPoint(view, offset, offset + node.nodeSize, targetY);
+              const splitCoords = view.coordsAtPos(splitPos);
+              splitY = Math.floor(splitCoords.bottom - editorTop);
+            }
+          }
+
+          // nextPageTextStart is the absolute Y coordinate of the first line on the next page.
+          // Formula: (Total physical height of previous pages) + Gap + Margin.
+          const nextPageTextStart = ((pageIndex + 1) * this.config.pageHeight) + ((pageIndex + 1) * this.config.pageGap) + this.config.margin;
+          const totalOffsetNeeded = nextPageTextStart - splitY;
+          const spacerHeight = Math.max(0, totalOffsetNeeded - accumulatedOffset);
+
+          breaks.push({ 
+            pos: splitPos, 
+            height: spacerHeight
+          });
+
+          accumulatedOffset += spacerHeight;
+          
+          pageIndex++;
+          
+          // If we split a paragraph, we need to check if the REMAINDER of it still overflows 
+          // the next page boundary. If it's a manual break, we stop processing this node.
+          if (isManualBreak || shouldBreakBefore) break;
+          
+          // If the original bottom of the node still exceeds the NEXT boundary, loop again
+          const nextBoundary = this.config.margin + (this.config.contentHeight * (pageIndex + 1));
+          if (nodeBottom <= nextBoundary + EPSILON) break;
+        } else {
+          break;
+        }
       }
     });
 

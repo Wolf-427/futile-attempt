@@ -33,6 +33,7 @@ export const Editor = {
         <div class="editor-status">
           <span id="word-count">0 words</span>
           <span id="char-count">0 chars</span>
+          <span id="page-count" style="margin-left:auto">Page 1</span>
         </div>
       </div>`;
 
@@ -61,8 +62,8 @@ export const Editor = {
     // Font size
     const fsSel = document.createElement('select')
     fsSel.className='editor-page-sel'; fsSel.title='Font size'; fsSel.style.width='58px'
-    this.FONT_SIZES.forEach(sz => { const o=document.createElement('option'); o.value=sz; o.textContent=sz + 'px'; fsSel.appendChild(o) })
-    fsSel.value=18
+    this.FONT_SIZES.forEach(sz => { const o=document.createElement('option'); o.value=sz; o.textContent=sz; fsSel.appendChild(o) })
+    fsSel.value=12
     api.store.get('editor-font-size').then(v => { if(v){fsSel.value=v; this._setFontSize(v)} }).catch(()=>{})
     fsSel.addEventListener('change', async () => {
       this._setFontSize(fsSel.value)
@@ -113,9 +114,6 @@ export const Editor = {
       btn('1—', () => t.core?.instance?.chain().focus().toggleOrderedList().run(),         () => isActive('orderedList'), 'Numbered list'),
       btn('⇥',  () => t.core?.instance?.chain().focus().sinkListItem('listItem').run(),    null, 'Indent'),
       btn('⇤',  () => t.core?.instance?.chain().focus().liftListItem('listItem').run(),    null, 'Outdent'),
-      btn('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="2" y1="12" x2="22" y2="12" stroke-dasharray="4 4"/></svg>',
-          () => t.core?.instance?.chain().focus().setHorizontalRule().run(), 
-          null, 'Manual Page Break'),
     ].forEach(b=>tb.appendChild(b)); tb.appendChild(sep())
 
     // Page size
@@ -156,13 +154,8 @@ export const Editor = {
   },
 
   _setFontSize(v) {
-    const pm = document.querySelector('.ProseMirror');
-    if (pm) {
-      pm.style.fontSize = v + 'px';
-      // We need a slight delay to ensure Tiptap has finished its internal 
-      // font-size update before we measure coordinates.
-      requestAnimationFrame(() => this.paginator.refresh());
-    }
+    const pm = document.querySelector('.ProseMirror')
+    if (pm) pm.style.fontSize = v + 'px' // Use px for more consistent cross-container measurement
   },
 
   _syncToolbar() {
@@ -205,34 +198,31 @@ export const Editor = {
     const showFormattingChars = Store.get('showFormattingChars')
     wrap.classList.toggle('show-format-chars', !!showFormattingChars)
 
-    const tileH = pg.height + this.PAGE_GAP
     wrap.style.width           = pg.width + 'px'
     wrap.style.height          = 'min-content'
-    wrap.style.padding         = this.MARGIN + 'px'
+    wrap.style.padding         = '0' // Fix: Remove wrapper padding to stop "narrow text"
     wrap.style.position        = 'relative'
     wrap.style.boxShadow       = 'none'
     wrap.style.border          = 'none'
     wrap.style.background      = 'transparent'
     wrap.style.backgroundImage = 'none'
 
-    // Set CSS variables for the margin overlay
     wrap.style.setProperty('--pg-w', pg.width + 'px')
     wrap.style.setProperty('--pg-h', pg.height + 'px')
     wrap.style.setProperty('--pg-m', this.MARGIN + 'px')
     wrap.style.setProperty('--pg-gap', this.PAGE_GAP + 'px')
 
-    const pm = document.querySelector('.ProseMirror');
+    const pm = document.querySelector('.ProseMirror')
     if (pm) {
       pm.style.minHeight = (pg.height - 2 * this.MARGIN) + 'px';
-      const fs = document.querySelector('.editor-page-sel[title="Font size"]')?.value || 18;
-      this._setFontSize(fs);
+      // Ensure margins are strictly applied here as the single source of truth
+      pm.style.setProperty('padding', `${this.MARGIN}px ${this.MARGIN}px`, 'important');
     }
 
     let styleEl = document.getElementById('editor-page-style')
     if (!styleEl) { styleEl=document.createElement('style'); styleEl.id='editor-page-style'; document.head.appendChild(styleEl) }
     styleEl.textContent = `@page{size:${pg.width}px ${pg.height}px;margin:0}`
 
-    if (this.paginator) this.paginator.refresh();
   },
 
   _onUpdate() {
@@ -285,7 +275,7 @@ export const Editor = {
   _md2html(md) {
     if (!md) return '<p></p>';
     return (md
-      .replace(/^---PAGE---$/gm, '<hr />')
+      .replace(/^---PAGE---$/gm, '<div data-type="pageBreak"></div>')
       .replace(/^### (.+)$/gm, '<h3>$1</h3>')
       .replace(/^## (.+)$/gm,  '<h2>$1</h2>')
       .replace(/^# (.+)$/gm,   '<h1>$1</h1>')
