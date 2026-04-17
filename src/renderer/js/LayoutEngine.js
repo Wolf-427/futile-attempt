@@ -10,13 +10,10 @@ export class LayoutEngine {
   compute(view) {
     const { doc } = view.state;
     const breaks = [];
-    
-    // Get the absolute top of the editor content to use as a stable zero-point.
-    // This ensures coordinates are consistent even if the window is scrolled.
     const editorRect = view.dom.getBoundingClientRect();
     const editorTop = editorRect.top;
 
-    const EPSILON = 1; 
+    const EPSILON = 0.2; 
     let pageIndex = 0;
     let accumulatedOffset = 0;
 
@@ -27,14 +24,12 @@ export class LayoutEngine {
       if (!dom || !(dom instanceof HTMLElement)) return;
 
       const rect = dom.getBoundingClientRect();
-      let nodeTop = Math.floor(rect.top - editorTop);
-      let nodeBottom = Math.floor(rect.bottom - editorTop);
+      let nodeTop = rect.top - editorTop;
+      let nodeBottom = rect.bottom - editorTop;
+      const nodeEnd = offset + node.nodeSize;
 
-      // We use a while loop to handle nodes that are longer than a single page
       while (true) {
-        // The boundary is the absolute point where Page N's content ends.
-        // Page 1 ends at (Margin + ContentHeight).
-        const currentBoundary = Math.floor(this.config.margin + (this.config.contentHeight * (pageIndex + 1)));
+        const currentBoundary = this.config.margin + (this.config.contentHeight * (pageIndex + 1));
         
         let shouldBreakBefore = false;
         if (node.type.name === 'heading' && nodeBottom < (currentBoundary + EPSILON)) {
@@ -43,29 +38,54 @@ export class LayoutEngine {
             const nextDom = view.nodeDOM(offset + node.nodeSize);
             if (nextDom && nextDom instanceof HTMLElement) {
               const nextRect = nextDom.getBoundingClientRect();
-              if (Math.floor(nextRect.bottom - editorTop) > (currentBoundary + EPSILON)) shouldBreakBefore = true;
+              if ((nextRect.bottom - editorTop) > (currentBoundary + EPSILON)) shouldBreakBefore = true;
             }
           }
         }
 
         const isManualBreak = node.type.name === 'horizontalRule';
         const isOverflowing = (nodeBottom > currentBoundary + EPSILON) || shouldBreakBefore;
+        let splitPos = offset;
+        let proposedSplitPos = offset;
+        let proposedSplitYBottom = nodeTop;
 
         if (isOverflowing || isManualBreak) {
-          let splitPos = offset;
-          let splitY = nodeTop;
-
           if (!isManualBreak && !shouldBreakBefore && node.isTextblock) {
-            const targetY = editorTop + currentBoundary;
-            const firstLineCoords = view.coordsAtPos(offset);
+            const lineStarts = this.getLineStarts(view, offset, nodeEnd);
             
-            // Use the absolute editorTop to normalize first line check
-            if (Math.floor(firstLineCoords.bottom - editorTop) < (currentBoundary - 2)) {
-              splitPos = this.findSplitPoint(view, offset, offset + node.nodeSize, targetY);
-              const splitCoords = view.coordsAtPos(splitPos);
-              splitY = Math.floor(splitCoords.bottom - editorTop);
+            // Find how many lines fully fit on the current page
+            let linesFitting = 0;
+            while (linesFitting < lineStarts.length) {
+              const lineBottom = view.coordsAtPos(lineStarts[linesFitting]).bottom - editorTop;
+              if (lineBottom > currentBoundary + EPSILON) break;
+              linesFitting++;
+            }
+
+            const totalLines = lineStarts.length;
+
+            // Apply Widow/Orphan Rules
+            if (linesFitting <= 1 && totalLines > 1) {
+              // Orphan: Only 1 line fits at the bottom. Move the whole block.
+              shouldBreakBefore = true;
+            } else if (linesFitting === totalLines - 1 && totalLines > 1) {
+              // Widow: Only 1 line is left for the next page.
+              // Move the break back one line so at least 2 lines go to the next page.
+              proposedSplitPos = lineStarts[linesFitting - 1];
+              proposedSplitYBottom = view.coordsAtPos(proposedSplitPos - 1).bottom - editorTop;
+            } else if (linesFitting > 0 && linesFitting < totalLines) {
+              // Standard split: Break at the first line that doesn't fit
+              proposedSplitPos = lineStarts[linesFitting];
+              proposedSplitYBottom = view.coordsAtPos(proposedSplitPos - 1).bottom - editorTop;
+            } else if (linesFitting === 0) {
+              // Block is entirely on the next page
+              shouldBreakBefore = true;
             }
           }
+
+          // If the entire node moves, we split at the current boundary.
+          // Otherwise, we split at the bottom of the last fitting line.
+          const splitY = shouldBreakBefore ? currentBoundary : proposedSplitYBottom;
+          splitPos = shouldBreakBefore ? offset : proposedSplitPos;
 
           // nextPageTextStart is the absolute Y coordinate of the first line on the next page.
           // Formula: (Total physical height of previous pages) + Gap + Margin.
@@ -73,20 +93,25 @@ export class LayoutEngine {
           const totalOffsetNeeded = nextPageTextStart - splitY;
           const spacerHeight = Math.max(0, totalOffsetNeeded - accumulatedOffset);
 
+          // Floating point drift happens here. We round the spacer to a 
+          // fixed precision to ensure cumulative math stays predictable.
+          const preciseSpacer = Math.round(spacerHeight * 100) / 100;
+
           breaks.push({ 
             pos: splitPos, 
-            height: spacerHeight
+            height: preciseSpacer
           });
-
-          accumulatedOffset += spacerHeight;
+          
+          accumulatedOffset += preciseSpacer;
           
           pageIndex++;
           
-          // If we split a paragraph, we need to check if the REMAINDER of it still overflows 
-          // the next page boundary. If it's a manual break, we stop processing this node.
           if (isManualBreak || shouldBreakBefore) break;
           
-          // If the original bottom of the node still exceeds the NEXT boundary, loop again
+          // Update nodeTop for the remainder of the block so that subsequent 
+          // loops measure from the start of the new page.
+          nodeTop = nextPageTextStart;
+
           const nextBoundary = this.config.margin + (this.config.contentHeight * (pageIndex + 1));
           if (nodeBottom <= nextBoundary + EPSILON) break;
         } else {
@@ -99,31 +124,24 @@ export class LayoutEngine {
   }
 
   /**
-   * Binary search for the exact character position where a paragraph overflows the page.
+   * Identifies the document position where each visual line begins within a block.
    */
-  findSplitPoint(view, start, end, targetY) {
-    let low = start;
-    let high = end;
-    let best = start;
-
-    // We use binary search to find the last position that still fits on the page
-    while (low <= high) {
-      const mid = Math.floor((low + high) / 2);
+  getLineStarts(view, start, end) {
+    const starts = [start];
+    let lastTop = view.coordsAtPos(start).top;
+    
+    // Iterate through characters to find where the vertical 'top' coordinate shifts.
+    // This indicates a browser-level line wrap.
+    for (let pos = start + 1; pos < end; pos++) {
       try {
-        const coords = view.coordsAtPos(mid);
-        if (coords.bottom <= targetY) {
-          best = mid;
-          low = mid + 1;
-        } else {
-          high = mid - 1;
+        const top = view.coordsAtPos(pos).top;
+        if (Math.abs(top - lastTop) > 2) {
+          starts.push(pos);
+          lastTop = top;
         }
-      } catch (e) {
-        high = mid - 1;
-      }
+      } catch (e) { /* ignore invalid pos */ }
     }
-
-    // If we couldn't find a clean split, split at the start of the block
-    return best;
+    return starts;
   }
 
   updateConfig(config) {

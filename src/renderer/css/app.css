@@ -317,7 +317,7 @@ textarea,input{font-family:var(--sans);}
 .update-date{font-size:11px;color:var(--tx3);margin-bottom:6px;}
 
 /* Page editor */
-.editor-page-sel{background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r);color:var(--tx2);font-family:var(--sans);font-size:12px;padding:3px 6px;outline:none;margin-left:4px;}
+.editor-page-sel{background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r);color:var(--tx2);font-family:var(--sans);font-size:11px;padding:3px 4px;outline:none;margin-left:4px;cursor:pointer;}
 .editor-page-sel:focus{border-color:var(--accent);}
 hr.page-break{border:none;border-top:2px dashed rgba(201,169,110,0.3);margin:0;width:100%;cursor:default;pointer-events:none;}
 .page-break-spacer{display:block;pointer-events:none;user-select:none;}
@@ -846,12 +846,28 @@ body.is-exporting,
   color: black !important;
   border: none !important;
   box-shadow: none !important;
-  width: 100% !important;
+  width: var(--pg-w) !important;
+  margin: 0 !important; /* Align to 0,0 for cleaner PDF capturing */
   min-height: 0 !important;
   height: auto !important;
 }
+
+/* Hide the visual margin lines and formatting chars overlay during export */
+.is-exporting .editor-page-wrap::after { 
+  display: none !important; 
+}
+
 /* Spacers are layout-only — never appear in print/export */
-.is-exporting .page-auto-spacer,
+.is-exporting .page-auto-spacer { 
+  display: block !important; 
+  background: transparent !important;
+  border: none !important;
+  margin: 0 !important;
+  /* Zero out height so the PDF engine doesn't add empty space before the break */
+  height: 0 !important;
+  min-height: 0 !important;
+  page-break-after: always !important;
+}
 .is-exporting .page-break-spacer { display: none !important; }
 .is-exporting .page-break-node { height: 0 !important; min-height: 0 !important; page-break-after: always; }
 .is-exporting .page-break-line { display: none !important; }

@@ -25,11 +25,14 @@ export class Paginator {
     const doc = this.editor.instance.state.doc;
     const view = this.editor.instance.view;
 
-    // 1. Clear existing decorations. 
+    // 1. Clear existing decorations and force a synchronous DOM update.
+    // We MUST ensure the old spacers are removed from the DOM before measuring,
+    // otherwise the LayoutEngine safety check will bail and return 1 page.
     this.editor.setDecorations(DecorationSet.empty);
-    // Force a browser reflow to ensure we are measuring a "flat" document
-    void view.dom.offsetHeight; 
+    if (view.updateState) view.updateState(view.state);
 
+    void view.dom.offsetHeight; 
+    
     // 2. Measure coordinates while the document is "flat".
     // Note: ProseMirror usually handles the DOM reflow synchronously on state change,
     // allowing engine.compute to read the updated "flat" coordinates immediately.

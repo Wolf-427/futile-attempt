@@ -106,9 +106,23 @@ function setupExport() {
       // Force window background to white to prevent dark margins in the PDF
       win.setBackgroundColor('#ffffff')
 
+      // Normalize Page Size
+      let pageSize = options.pageSize || 'A4';
+      if (typeof pageSize === 'string') {
+        if (pageSize.toLowerCase() === 'letter') pageSize = 'Letter';
+        else if (pageSize.toLowerCase() === 'a4') pageSize = 'A4';
+      } else if (typeof pageSize === 'object') {
+        // Electron printToPDF expects microns for custom sizes (1px approx 264.58 microns)
+        pageSize = {
+          width: Math.round(pageSize.width * 264.58),
+          height: Math.round(pageSize.height * 264.58)
+        };
+      }
+
       const pdfOptions = {
-        marginsType: 1, // 1 = No Margins (Uses CSS padding instead for 100% accuracy)
-        pageSize: options.pageSize || 'A4',
+        marginsType: 1, // 1 is "No Margins" - ensures our CSS padding/layout is used exactly
+        preferCSSPageSize: true,
+        pageSize: pageSize,
         printBackground: true,
         displayHeaderFooter: true,
         headerTemplate: '<div></div>',
@@ -128,12 +142,36 @@ function setupExport() {
     }
   })
 
-  ipcMain.handle('export:docx', async (_, filePath, htmlContent) => {
+  ipcMain.handle('export:docx', async (_, filePath, htmlContent, options = {}) => {
     try {
-      const docxBuffer = await htmlToDocx(htmlContent, null, {
-        // Options for html-to-docx, e.g., styles, margins
+      const font = options.font || 'Times New Roman';
+      const fontSize = options.fontSize || 24; // Half-points (24 = 12pt)
+
+      // html-to-docx is more reliable when styles are applied directly to elements.
+      // The font and fontSize options here act as a general document default.
+      const fullHtml = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8">
+          </head>
+          <body>${htmlContent || ''}</body>
+        </html>`;
+        
+      // Use empty strings instead of null for header/footer to avoid internal library "null to object" errors
+      const docxBuffer = await htmlToDocx(fullHtml, '', '', {
+        title: 'Scriptum Document',
+        orientation: 'portrait',
+        margins: { top: 1440, right: 1440, bottom: 1440, left: 1440 }, // Standard 1-inch margins
+        font: options.font || 'Times New Roman',
+        fontSize: fontSize,
+        decodeEntities: true
       })
-      await fs.writeFile(filePath, docxBuffer)
+
+      // Ensure we are writing a valid Buffer
+      const buffer = Buffer.isBuffer(docxBuffer) ? docxBuffer : Buffer.from(docxBuffer);
+      await fs.writeFile(filePath, buffer)
+      
       return true
     } catch (error) { throw error }
   })

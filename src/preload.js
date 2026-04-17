@@ -35,7 +35,7 @@ contextBridge.exposeInMainWorld('api', {
     restart: () => ipcRenderer.invoke('update:restart'),
   },
   export: {
-    pdf: (filePath) => ipcRenderer.invoke('export:pdf', filePath), // Existing PDF export
-    docx: (filePath, htmlContent) => ipcRenderer.invoke('export:docx', filePath, htmlContent), // New DOCX export
+    pdf: (filePath, options) => ipcRenderer.invoke('export:pdf', filePath, options), // Pass options to main
+    docx: (filePath, htmlContent, options) => ipcRenderer.invoke('export:docx', filePath, htmlContent, options), // New DOCX export
   }
 })

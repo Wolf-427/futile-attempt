@@ -12,6 +12,14 @@ export const Editor = {
     a4:     { width: 794,  height: 1123 },
     letter: { width: 816,  height: 1056 },
   },
+  FONT_FAMILIES: [
+    { label: 'Lora (Serif)', value: 'var(--serif)' },
+    { label: 'DM Sans', value: 'var(--sans)' },
+    { label: 'Arial', value: 'Arial, sans-serif' },
+    { label: 'Times New Roman', value: '"Times New Roman", serif' },
+    { label: 'Inter', value: '"Inter", sans-serif' },
+    { label: 'Georgia', value: 'Georgia, serif' },
+  ],
   MARGIN:   96,
   PAGE_GAP: 32,
   FONT_SIZES: [8,9,10,11,12,14,16,18,20,22,24,26,28,36,48,72],
@@ -44,7 +52,10 @@ export const Editor = {
     this.paginator = new Paginator(this.core);
     this._buildToolbar();
     this._applyPageSize();
-    Store.sub(['visibleMargins', 'showFormattingChars', 'paperTheme', 'theme'], () => this._applyPageSize());
+    Store.sub(['visibleMargins', 'showFormattingChars', 'paperTheme', 'theme'], async () => {
+      await this._applyPageSize();
+      this._updateUI();
+    });
   },
 
   _buildToolbar() {
@@ -70,6 +81,20 @@ export const Editor = {
       await api.store.set('editor-font-size', fsSel.value)
     })
     tb.appendChild(fsSel); tb.appendChild(sep())
+
+    // Font Family
+    const ffSel = document.createElement('select')
+    ffSel.className='editor-page-sel'; ffSel.title='Font family'; ffSel.style.width='110px'
+    this.FONT_FAMILIES.forEach(f => { const o=document.createElement('option'); o.value=f.value; o.textContent=f.label; ffSel.appendChild(o) })
+    
+    api.store.get('editor-font-family').then(v => { if(v){ffSel.value=v; this._setFontFamily(v)} }).catch(()=>{})
+    
+    ffSel.addEventListener('change', async () => {
+      const val = ffSel.value
+      this._setFontFamily(val)
+      await api.store.set('editor-font-family', val)
+    })
+    tb.appendChild(ffSel); tb.appendChild(sep())
 
     // Paragraph style
     const hSel = document.createElement('select')
@@ -158,6 +183,11 @@ export const Editor = {
     if (pm) pm.style.fontSize = v + 'px' // Use px for more consistent cross-container measurement
   },
 
+  _setFontFamily(v) {
+    const pm = document.querySelector('.ProseMirror')
+    if (pm) pm.style.fontFamily = v
+  },
+
   _syncToolbar() {
     if (!this.core?.instance) return
     document.querySelectorAll('.editor-tool').forEach(b => {
@@ -225,17 +255,24 @@ export const Editor = {
 
   },
 
-  _onUpdate() {
+  _updateUI() {
     if (!this.core?.instance) return;
-    
+
     const text = this.core.instance.getText();
     const words = text.trim() ? text.trim().split(/\s+/).length : 0;
-    document.getElementById('word-count').textContent = words + ' words';
-    document.getElementById('char-count').textContent = text.length + ' chars';
+    const wordEl = document.getElementById('word-count');
+    const charEl = document.getElementById('char-count');
+
+    if (wordEl) wordEl.textContent = words + ' words';
+    if (charEl) charEl.textContent = text.length + ' chars';
 
     // Debounce pagination to handle large pastes without crashing
     clearTimeout(this._paginateTimer);
     this._paginateTimer = setTimeout(() => this.paginator.refresh(), 150);
+  },
+
+  _onUpdate() {
+    this._updateUI();
 
     clearTimeout(this._saveTimer);
     this._saveTimer = setTimeout(() => this._save(), 1000);
@@ -250,10 +287,16 @@ export const Editor = {
     } catch { this.core.setContent('<p></p>'); }
 
     this._syncToolbar()
-    this._applyPageSize()
+    await this._applyPageSize()
+    this._updateUI()
+
     try {
       const v = await api.store.get('editor-font-size')
       if (v) { this._setFontSize(v); const s=document.querySelector('.editor-page-sel[title="Font size"]'); if(s) s.value=v }
+    } catch {}
+    try {
+      const f = await api.store.get('editor-font-family')
+      if (f) { this._setFontFamily(f); const s=document.querySelector('.editor-page-sel[title="Font family"]'); if(s) s.value=f }
     } catch {}
     requestAnimationFrame(()=>this.core.instance.commands.focus('end'))
   },
@@ -266,9 +309,48 @@ export const Editor = {
   _getCleanHTML() {
     const html = this.core.getHTML();
     const doc = new DOMParser().parseFromString(html, 'text/html');
-    const clone = doc.body;
-    clone.querySelectorAll('.page-auto-spacer').forEach(s=>s.remove())
-    return clone.innerHTML
+    const container = doc.body;
+
+    // 1. Remove all layout-only spacers and indicators
+    container.querySelectorAll('.page-auto-spacer, .page-break-spacer, .page-number-indicator, .page-break-node').forEach(s => s.remove());
+    
+    // 2. Transform or strip elements for Word compatibility
+    const all = container.querySelectorAll('*');
+    for (const el of all) {
+      const tag = el.tagName.toLowerCase();
+
+      // Replace manual page breaks with a standard HR
+      if (el.getAttribute('data-type') === 'pageBreak' || tag === 'hr') {
+        const pb = doc.createElement('div');
+        pb.setAttribute('style', 'page-break-after: always;');
+        el.replaceWith(pb);
+        continue;
+      }
+
+      // Word dislikes empty paragraphs used for spacing
+      if (tag === 'p' && !el.textContent.trim() && !el.querySelector('img, br')) {
+        el.innerHTML = '&nbsp;'; 
+      }
+
+      // Only preserve critical inline styles (alignment)
+      let cleanStyle = '';
+      if (el.style.textAlign) cleanStyle += `text-align: ${el.style.textAlign};`;
+      if (el.style.paddingLeft) cleanStyle += `padding-left: ${el.style.paddingLeft};`;
+      if (el.style.fontWeight) cleanStyle += `font-weight: ${el.style.fontWeight};`;
+
+      // Important: Save required attributes BEFORE removing them
+      const saved = {};
+      const allowedAttrs = ['href', 'src', 'alt', 'colspan', 'rowspan'];
+      allowedAttrs.forEach(a => { if(el.hasAttribute(a)) saved[a] = el.getAttribute(a); });
+
+      // Strip data attributes and classes which confuse Word, but keep IDs and basic structure
+      Array.from(el.attributes).forEach(attr => { if(attr.name.startsWith('data-') || attr.name === 'class') el.removeAttribute(attr.name) });
+      Object.entries(saved).forEach(([k,v]) => el.setAttribute(k, v));
+      
+      if (cleanStyle) el.setAttribute('style', cleanStyle);
+    }
+
+    return container.innerHTML;
   },
 
   // ── Markdown ───────────────────────────────────────────────────────────────
@@ -341,23 +423,102 @@ export const Editor = {
       if(!p) return
 
       const pg = await this.getPageSize()
+      // Pass dimensions if custom, otherwise preset name string
+      const pdfSize = pg.preset === 'custom' ? { width: pg.width, height: pg.height } : (pg.preset === 'letter' ? 'Letter' : 'A4');
+
       document.documentElement.classList.add('is-exporting')
 
-      // Give the DOM more time to reflow and bypass any background transitions
-      setTimeout(async () => {
+      // Increase delay slightly to ensure all CSS transitions (0.3s) and reflows are settled
+      await new Promise(r => setTimeout(r, 700));
+
         try {
-          await api.export.pdf(p, { pageSize: pg.preset.toUpperCase() })
+        await api.export.pdf(p, { pageSize: pdfSize })
           alert('Exported!')
         } catch(e) { console.error(e); alert('Failed: ' + e.message) }
         finally { document.documentElement.classList.remove('is-exporting') }
-      }, 350)
     }
     ov.querySelector('#export-docx-btn').onclick=async()=>{
       close()
       const p=await api.dialog.save('Export DOCX',name+'.docx',[{name:'DOCX',extensions:['docx']}])
       if(!p) return
-      try{await api.export.docx(p,this._getCleanHTML());alert('Exported!')}catch(e){alert('Failed: '+e.message)}
+      try {
+        // Handle cases where the store might be empty (first run)
+        const ff = await api.store.get('editor-font-family') || 'var(--serif)'
+        const fs = await api.store.get('editor-font-size') || 12
+        
+        // Clean the font name for Word (e.g., "Lora (Serif)" -> "Lora") and get font size in points
+        const fontEntry = this.FONT_FAMILIES.find(f => f.value === ff)
+        let fontName = 'Lora' // Default fallback
+        
+        if (fontEntry) {
+          fontName = fontEntry.label.replace(/\s*\(.*\)/, '').trim()
+        } else if (ff.includes('"')) {
+          // Extract name from raw values like '"Inter", sans-serif'
+          fontName = ff.split(',')[0].replace(/"/g, '').trim()
+        }
+        const fontSizePt = parseInt(fs) || 12
+        
+        // html-to-docx uses half-points for its fontSize option
+        const docxFontSize = fontSizePt * 2 
+
+        await api.export.docx(p, this._getCleanHTML(fontName, fontSizePt), { font: fontName, fontSize: docxFontSize })
+        alert('Exported!')
+      } catch(e) { alert('Failed: ' + e.message) }
     }
+  },
+
+  _getCleanHTML(exportFontName, exportFontSizePt) {
+    const html = this.core.getHTML();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const container = doc.body;
+
+    // 1. Remove all layout-only spacers and indicators
+    container.querySelectorAll('.page-auto-spacer, .page-break-spacer, .page-number-indicator, .page-break-node').forEach(s => s.remove());
+    
+    // 2. Transform or strip elements for Word compatibility
+    const all = container.querySelectorAll('*');
+    for (const el of all) {
+      const tag = el.tagName.toLowerCase();
+
+      // Replace manual page breaks with a standard HR
+      if (el.getAttribute('data-type') === 'pageBreak' || tag === 'hr') {
+        const pb = doc.createElement('div');
+        pb.setAttribute('style', 'page-break-after: always;');
+        el.replaceWith(pb);
+        continue;
+      }
+
+      // Word dislikes empty paragraphs used for spacing
+      if (tag === 'p' && !el.textContent.trim() && !el.querySelector('img, br')) {
+        el.innerHTML = '&nbsp;'; 
+      }
+
+      // Preserve critical inline styles (alignment, font)
+      let cleanStyle = '';
+      if (el.style.textAlign) cleanStyle += `text-align: ${el.style.textAlign};`;
+      if (el.style.paddingLeft) cleanStyle += `padding-left: ${el.style.paddingLeft};`;
+      if (el.style.fontWeight) cleanStyle += `font-weight: ${el.style.fontWeight};`;
+
+      // Explicitly set font-family and font-size for text-bearing elements
+      const textTags = ['p', 'h1', 'h2', 'h3', 'li', 'span', 'div', 'strong', 'em', 's', 'u', 'blockquote'];
+      if (textTags.includes(tag)) {
+        cleanStyle += `font-family: '${exportFontName}';`;
+        cleanStyle += `font-size: ${exportFontSizePt}pt;`;
+      }
+
+      // Important: Save required attributes BEFORE removing them
+      const saved = {};
+      const allowedAttrs = ['href', 'src', 'alt', 'colspan', 'rowspan'];
+      allowedAttrs.forEach(a => { if(el.hasAttribute(a)) saved[a] = el.getAttribute(a); });
+
+      // Strip data attributes and classes which confuse Word, but keep IDs and basic structure
+      Array.from(el.attributes).forEach(attr => { if(attr.name.startsWith('data-') || attr.name === 'class') el.removeAttribute(attr.name) });
+      Object.entries(saved).forEach(([k,v]) => el.setAttribute(k, v));
+      
+      if (cleanStyle) el.setAttribute('style', cleanStyle);
+    }
+
+    return container.innerHTML;
   },
 }
 
