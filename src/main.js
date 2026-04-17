@@ -3,8 +3,93 @@ const path = require('path')
 const fs = require('fs').promises
 const htmlToDocx = require('html-to-docx')
 const fss = require('fs')
+const nspell = require('nspell')
 
 let win
+
+// ── Spell Checker (nspell / Hunspell) ─────────────────────────────────────────
+const DICT_PACKAGES = {
+  'en-US': 'dictionary-en',
+  'en-GB': 'dictionary-en-gb',
+  'fr-FR': 'dictionary-fr',
+  'de-DE': 'dictionary-de',
+  'es-ES': 'dictionary-es',
+}
+const dictCache = new Map()  // lang → nspell instance
+let spellReady = null        // Promise<nspell>
+
+// Tries to load a .aff/.dic pair from {userData}/dictionaries/{lang}.{ext}
+// before falling back to the bundled npm package.
+async function loadDictionary(lang) {
+  if (dictCache.has(lang)) return dictCache.get(lang)
+
+  const dictDir = path.join(app.getPath('userData'), 'dictionaries')
+  const affPath = path.join(dictDir, `${lang}.aff`)
+  const dicPath = path.join(dictDir, `${lang}.dic`)
+
+  let dict
+  try {
+    const [aff, dic] = await Promise.all([fs.readFile(affPath), fs.readFile(dicPath)])
+    dict = { aff, dic }
+    console.log(`[spellcheck] loaded custom dictionary for ${lang} from ${dictDir}`)
+  } catch {
+    const pkg = DICT_PACKAGES[lang] || DICT_PACKAGES['en-US']
+    console.log(`[spellcheck] no custom files at ${affPath} — using npm package ${pkg}`)
+    const mod = await import(pkg)
+    dict = mod.default
+  }
+
+  const spell = nspell(dict)
+  dictCache.set(lang, spell)
+  return spell
+}
+
+function spellSuggest(spell, word) {
+  const contractions = []
+  for (let i = 1; i < word.length; i++) {
+    const candidate = word.slice(0, i) + "'" + word.slice(i)
+    if (spell.correct(candidate)) contractions.push(candidate)
+  }
+  const base = spell.suggest(word).filter(s => !contractions.includes(s))
+  return [...contractions, ...base].slice(0, 6)
+}
+
+async function spellSetLanguage(lang) {
+  dictCache.delete(lang)  // Always re-check filesystem so newly placed files are picked up
+  spellReady = loadDictionary(lang).then(async spell => {
+    // Re-apply persisted custom words whenever the dictionary switches
+    const s = await readStore().catch(() => ({}))
+    for (const w of (s['spell-custom-words'] || [])) spell.add(w)
+    return spell
+  })
+  return spellReady
+}
+
+function setupSpellcheck() {
+  ipcMain.handle('spellcheck:setLanguage', async (_, lang) => { await spellSetLanguage(lang); return true })
+  ipcMain.handle('spellcheck:openDictionaryFolder', async () => {
+    const dir = path.join(app.getPath('userData'), 'dictionaries')
+    await fs.mkdir(dir, { recursive: true })
+    shell.openPath(dir)
+  })
+  ipcMain.handle('spellcheck:checkWords',  async (_, words) => {
+    const spell = await spellReady.catch(() => null)
+    if (!spell) return []
+    return words.filter(w => !spell.correct(w))
+  })
+  ipcMain.handle('spellcheck:suggest', async (_, word) => {
+    const spell = await spellReady.catch(() => null)
+    return spell ? spellSuggest(spell, word) : []
+  })
+  ipcMain.handle('spellcheck:addWord', async (_, word) => {
+    const spell = await spellReady.catch(() => null)
+    if (spell) spell.add(word)
+    const s = await readStore()
+    const custom = s['spell-custom-words'] || []
+    if (!custom.includes(word)) { s['spell-custom-words'] = [...custom, word]; await writeStore(s) }
+    return true
+  })
+}
 
 const createWindow = () => {
   win = new BrowserWindow({
@@ -20,43 +105,62 @@ const createWindow = () => {
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: false,
-      spellcheck: true,
+      spellcheck: false, // handled entirely by our nspell plugin
     },
   })
   win.loadFile(path.join(__dirname, 'renderer/index.html'))
 
-  // Initialize Spellchecker from Store
+  // Bootstrap the spell checker with the stored language (or system default)
   readStore().then(s => {
-    // Default to system locale or US English, but avoid mixing them into a multi-lang list
-    const langs = s['spellcheck-languages'] || [app.getLocale()?.replace('_', '-') || 'en-US']
-    const finalLangs = Array.isArray(langs) ? langs : [langs]
-    if (win?.webContents?.session) win.webContents.session.setSpellCheckerLanguages(finalLangs)
-  }).catch(() => {})
+    const lang = (s['spellcheck-languages'] || [])[0] || app.getLocale()?.replace('_', '-') || 'en-US'
+    spellSetLanguage(lang)
+  }).catch(() => { spellSetLanguage('en-US') })
 
-  // Spelling Corrector Context Menu
-  win.webContents.on('context-menu', (event, params) => {
-    // Only show the native menu if we are clicking on editable text (the Editor)
+  // Context menu — async so we can fetch suggestions from nspell before popup
+  win.webContents.on('context-menu', async (event, params) => {
     if (!params.isEditable) return
+
+    // Ask the renderer which .spell-error word (if any) is under the cursor
+    let wordInfo = null
+    try {
+      wordInfo = await win.webContents.executeJavaScript(`
+        (() => {
+          const el = document.elementFromPoint(${params.x}, ${params.y})
+          const span = el && el.closest('.spell-error')
+          if (!span) return null
+          return {
+            word: span.dataset.word || span.textContent.trim(),
+            from: parseInt(span.dataset.from),
+            to:   parseInt(span.dataset.to),
+          }
+        })()
+      `)
+    } catch {}
 
     const menu = new Menu()
 
-    // Add spelling suggestions provided by Electron
-    for (const suggestion of params.dictionarySuggestions) {
-      menu.append(new MenuItem({
-        label: suggestion,
-        click: () => win.webContents.replaceMisspelling(suggestion)
-      }))
-    }
+    if (wordInfo) {
+      const spell = await spellReady.catch(() => null)
+      const suggestions = spell ? spellSuggest(spell, wordInfo.word) : []
 
-    if (params.dictionarySuggestions.length > 0) {
-      menu.append(new MenuItem({ type: 'separator' }))
-    }
+      for (const s of suggestions) {
+        menu.append(new MenuItem({
+          label: s,
+          click: () => win.webContents.send('spellcheck:replace', { from: wordInfo.from, to: wordInfo.to, replacement: s })
+        }))
+      }
+      if (suggestions.length) menu.append(new MenuItem({ type: 'separator' }))
 
-    // Option to add the misspelled word to the local dictionary
-    if (params.misspelledWord) {
       menu.append(new MenuItem({
-        label: `Add "${params.misspelledWord}" to Dictionary`,
-        click: () => win.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord)
+        label: `Add "${wordInfo.word}" to Dictionary`,
+        click: async () => {
+          const spell = await spellReady.catch(() => null)
+          if (spell) spell.add(wordInfo.word)
+          const s = await readStore()
+          const custom = s['spell-custom-words'] || []
+          if (!custom.includes(wordInfo.word)) { s['spell-custom-words'] = [...custom, wordInfo.word]; await writeStore(s) }
+          win.webContents.send('spellcheck:recheck')
+        }
       }))
       menu.append(new MenuItem({ type: 'separator' }))
     }
@@ -64,7 +168,6 @@ const createWindow = () => {
     menu.append(new MenuItem({ role: 'cut' }))
     menu.append(new MenuItem({ role: 'copy' }))
     menu.append(new MenuItem({ role: 'paste' }))
-
     menu.popup()
   })
 }
@@ -76,6 +179,7 @@ app.whenReady().then(() => {
   setupDialogs()
   setupUpdater()
   setupExport()
+  setupSpellcheck()
 })
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
@@ -93,8 +197,8 @@ function setupStore() {
     s[k] = v; 
     await writeStore(s); 
     if (k === 'spellcheck-languages' && win && !win.isDestroyed()) {
-      const langs = Array.isArray(v) ? v : [v];
-      win.webContents.session.setSpellCheckerLanguages(langs);
+      const lang = Array.isArray(v) ? v[0] : v
+      if (lang) spellSetLanguage(lang)
     }
     return true 
   })

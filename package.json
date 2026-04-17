@@ -5,12 +5,25 @@
   "description": "A writing app with spatial canvas boards",
   "main": "src/main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "bundle": "esbuild src/renderer/js/tiptap.bundle.entry.js --bundle --format=iife --global-name=Tiptap --outfile=src/renderer/js/tiptap.bundle.js --minify"
   },
   "dependencies": {
-    "html-to-docx": "^1.8.0"
+    "dictionary-de": "^3.0.0",
+    "dictionary-en": "^4.0.0",
+    "dictionary-en-gb": "^3.0.0",
+    "dictionary-es": "^4.0.0",
+    "dictionary-fr": "^3.0.0",
+    "html-to-docx": "^1.8.0",
+    "nspell": "^2.1.5"
   },
   "devDependencies": {
-    "electron": "^31.0.0"
+    "@tiptap/core": "^3.22.3",
+    "@tiptap/extension-placeholder": "^3.22.3",
+    "@tiptap/extension-text-align": "^3.22.3",
+    "@tiptap/extension-underline": "^3.22.3",
+    "@tiptap/starter-kit": "^3.22.3",
+    "electron": "^31.0.0",
+    "esbuild": "^0.28.0"
   }
 }

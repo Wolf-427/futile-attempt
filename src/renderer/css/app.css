@@ -901,3 +901,13 @@ html.is-exporting {
 .is-exporting .show-format-chars .ProseMirror li::after {
   display: none !important;
 }
+
+
+/* ── Spell-check underlines ──────────────────────────────────────────────── */
+.spell-error {
+  text-decoration: underline wavy #e05252;
+  text-decoration-skip-ink: none;
+  cursor: text;
+}
+/* Hide underlines in exported documents */
+.is-exporting .spell-error { text-decoration: none; }

@@ -35,7 +35,16 @@ contextBridge.exposeInMainWorld('api', {
     restart: () => ipcRenderer.invoke('update:restart'),
   },
   export: {
-    pdf: (filePath, options) => ipcRenderer.invoke('export:pdf', filePath, options), // Pass options to main
-    docx: (filePath, htmlContent, options) => ipcRenderer.invoke('export:docx', filePath, htmlContent, options), // New DOCX export
+    pdf: (filePath, options) => ipcRenderer.invoke('export:pdf', filePath, options),
+    docx: (filePath, htmlContent, options) => ipcRenderer.invoke('export:docx', filePath, htmlContent, options),
+  },
+  spellcheck: {
+    setLanguage: (lang)   => ipcRenderer.invoke('spellcheck:setLanguage', lang),
+    checkWords:  (words)  => ipcRenderer.invoke('spellcheck:checkWords', words),
+    suggest:     (word)   => ipcRenderer.invoke('spellcheck:suggest', word),
+    addWord:     (word)   => ipcRenderer.invoke('spellcheck:addWord', word),
+    onRecheck:   (cb)     => ipcRenderer.on('spellcheck:recheck', cb),
+    onReplace:      (cb)  => ipcRenderer.on('spellcheck:replace', (_, data) => cb(data)),
+    openDictionaryFolder: () => ipcRenderer.invoke('spellcheck:openDictionaryFolder'),
   }
 })

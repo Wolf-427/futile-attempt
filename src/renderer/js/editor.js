@@ -55,8 +55,12 @@ export const Editor = {
     const savedLangs = await api.store.get('spellcheck-languages').catch(() => []);
     const initialLang = savedLangs?.[0] || 'en-US';
 
+    // Prime the nspell dictionary before the editor boots so the first check has it ready
+    await api.spellcheck.setLanguage(initialLang).catch(() => {});
+
     this.core = new EditorCore(container.querySelector('#tiptap-target'), {
       lang: initialLang,
+      spellcheckApi: api.spellcheck,
       onUpdate: () => this._onUpdate(),
       onSelectionUpdate: () => this._syncToolbar()
     });
@@ -87,9 +91,8 @@ export const Editor = {
     this.FONT_SIZES.forEach(sz => { const o=document.createElement('option'); o.value=sz; o.textContent=sz; fsSel.appendChild(o) })
     fsSel.value=12
     api.store.get('editor-font-size').then(v => { if(v){fsSel.value=v; this._setFontSize(v)} }).catch(()=>{})
-    fsSel.addEventListener('change', async () => {
+    fsSel.addEventListener('change', () => {
       this._setFontSize(fsSel.value)
-      await api.store.set('editor-font-size', fsSel.value)
     })
     tb.appendChild(fsSel); tb.appendChild(sep())
 
@@ -157,10 +160,15 @@ export const Editor = {
     langSel.className='editor-page-sel'; langSel.title='Spellcheck language'; langSel.style.width='90px'
     this.SPELLCHECK_LANGS.forEach(l => { const o=document.createElement('option'); o.value=l.value; o.textContent=l.label; langSel.appendChild(o) })
     api.store.get('spellcheck-languages').then(v => { if(v && v.length) { langSel.value = v[0]; t._applyLanguage(v[0], false) } }).catch(()=>{})
-    langSel.addEventListener('change', async () => {
-      t._applyLanguage(langSel.value)
+    langSel.addEventListener('change', () => {
+      t._applyLanguage(langSel.value).catch(console.error)
     })
-    tb.appendChild(langSel); tb.appendChild(sep())
+    const dictBtn = btn(
+      '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>',
+      () => api.spellcheck.openDictionaryFolder(),
+      null, 'Open dictionary folder'
+    )
+    tb.appendChild(langSel); tb.appendChild(dictBtn); tb.appendChild(sep())
 
     // Page size
     const pgSel = document.createElement('select')
@@ -201,18 +209,23 @@ export const Editor = {
 
   async _applyLanguage(lang, persist = true) {
     if (persist) await api.store.set('spellcheck-languages', [lang]);
-    
-    // Sync root level lang attributes for system hints
     document.documentElement.lang = lang.split('-')[0];
-    document.body.setAttribute('lang', lang);
-
-    // Hand over the attribute cycle to EditorCore for a robust reset
     if (this.core) await this.core.setLanguage(lang);
   },
 
   _setFontSize(v) {
+    if (this.core?.instance) {
+      const { from, to } = this.core.instance.state.selection
+      if (from !== to) {
+        // Text selected — apply as inline mark, don't touch the global default
+        this.core.setFontSize(v)
+        return
+      }
+    }
+    // No selection — change the whole-document default and persist it
     const pm = document.querySelector('.ProseMirror')
-    if (pm) pm.style.fontSize = v + 'px' // Use px for more consistent cross-container measurement
+    if (pm) pm.style.fontSize = v + 'px'
+    api.store.set('editor-font-size', v).catch(() => {})
   },
 
   _setFontFamily(v) {
@@ -232,6 +245,16 @@ export const Editor = {
       else if (this.core.instance.isActive('heading',{level:3})) hSel.value='h3'
       else if (this.core.instance.isActive('blockquote'))         hSel.value='blockquote'
       else                                              hSel.value='p'
+    }
+    const fsSel = document.querySelector('.editor-page-sel[title="Font size"]')
+    if (fsSel) {
+      const active = this.core.getActiveFontSize()
+      if (active) fsSel.value = active
+      else {
+        // Reflect the CSS default so the selector never looks blank
+        const globalSize = document.querySelector('.ProseMirror')?.style.fontSize?.replace('px','')
+        if (globalSize) fsSel.value = globalSize
+      }
     }
   },
 
