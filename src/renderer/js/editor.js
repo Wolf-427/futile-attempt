@@ -516,7 +516,8 @@ export const Editor = {
         // html-to-docx uses half-points for its fontSize option
         const docxFontSize = fontSizePt * 2 
 
-        await api.export.docx(p, this._getCleanHTML(fontName, fontSizePt), { font: fontName, fontSize: docxFontSize })
+        const markdown = this._html2md(this._getCleanHTML())
+        await api.export.docx(p, markdown, { font: fontName, fontSize: docxFontSize })
         alert('Exported!')
       } catch(e) { alert('Failed: ' + e.message) }
     }

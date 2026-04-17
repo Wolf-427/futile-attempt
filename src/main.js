@@ -1,9 +1,9 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, net, Menu, MenuItem } = require('electron')
 const path = require('path')
 const fs = require('fs').promises
-const htmlToDocx = require('html-to-docx')
 const fss = require('fs')
 const nspell = require('nspell')
+const { Document, Paragraph, TextRun, HeadingLevel, PageBreak, Packer } = require('docx')
 
 let win
 
@@ -256,6 +256,87 @@ function setupDialogs() {
   })
 }
 
+// ── Markdown → DOCX ───────────────────────────────────────────────────────────
+function parseInlineRuns(text, props) {
+  const runs = []
+  // Handles ***bold-italic***, **bold**, *italic*, ~~strike~~ in one pass
+  const re = /\*\*\*([^*]+)\*\*\*|\*\*([^*]+)\*\*|\*([^*]+)\*|~~([^~]+)~~/g
+  let last = 0, m
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) runs.push(new TextRun({ ...props, text: text.slice(last, m.index) }))
+    if      (m[1]) runs.push(new TextRun({ ...props, text: m[1], bold: true, italics: true }))
+    else if (m[2]) runs.push(new TextRun({ ...props, text: m[2], bold: true }))
+    else if (m[3]) runs.push(new TextRun({ ...props, text: m[3], italics: true }))
+    else if (m[4]) runs.push(new TextRun({ ...props, text: m[4], strike: true }))
+    last = m.index + m[0].length
+  }
+  if (last < text.length) runs.push(new TextRun({ ...props, text: text.slice(last) }))
+  return runs.length ? runs : [new TextRun({ ...props, text })]
+}
+
+async function mdToDocxBuffer(markdown, options = {}) {
+  const font     = options.font     || 'Times New Roman'
+  const halfPts  = options.fontSize || 24               // half-points (24 = 12 pt)
+  const base     = { font, size: halfPts }
+
+  const paragraphs = []
+  const lines = (markdown || '').split('\n')
+  let i = 0
+
+  while (i < lines.length) {
+    const line = lines[i]
+
+    if (!line.trim())            { i++; continue }
+    if (line.trim() === '---PAGE---') {
+      paragraphs.push(new Paragraph({ children: [new PageBreak()] }))
+      i++; continue
+    }
+    if (line.startsWith('### ')) {
+      paragraphs.push(new Paragraph({ heading: HeadingLevel.HEADING_3, children: parseInlineRuns(line.slice(4), base) }))
+      i++; continue
+    }
+    if (line.startsWith('## '))  {
+      paragraphs.push(new Paragraph({ heading: HeadingLevel.HEADING_2, children: parseInlineRuns(line.slice(3), base) }))
+      i++; continue
+    }
+    if (line.startsWith('# '))   {
+      paragraphs.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: parseInlineRuns(line.slice(2), base) }))
+      i++; continue
+    }
+    if (line.startsWith('> '))   {
+      paragraphs.push(new Paragraph({
+        indent: { left: 720 },
+        children: parseInlineRuns(line.slice(2), { ...base, italics: true })
+      }))
+      i++; continue
+    }
+    if (line.startsWith('- '))   {
+      paragraphs.push(new Paragraph({ bullet: { level: 0 }, children: parseInlineRuns(line.slice(2), base) }))
+      i++; continue
+    }
+
+    // Regular paragraph — merge consecutive plain lines into one
+    let text = line; i++
+    while (i < lines.length) {
+      const next = lines[i]
+      if (!next.trim() || /^(#{1,3} |> |- |---PAGE---)/.test(next)) break
+      text += ' ' + next.trim(); i++
+    }
+    paragraphs.push(new Paragraph({ children: parseInlineRuns(text, base) }))
+  }
+
+  if (!paragraphs.length) paragraphs.push(new Paragraph({ children: [new TextRun({ text: '' })] }))
+
+  const doc = new Document({
+    creator: 'Scriptum',
+    sections: [{
+      properties: { page: { margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } } },
+      children: paragraphs
+    }]
+  })
+  return Packer.toBuffer(doc)
+}
+
 // ── Export ────────────────────────────────────────────────────────────────────
 function setupExport() {
   ipcMain.handle('export:pdf', async (_, filePath, options = {}) => {
@@ -299,38 +380,10 @@ function setupExport() {
     }
   })
 
-  ipcMain.handle('export:docx', async (_, filePath, htmlContent, options = {}) => {
-    try {
-      const font = options.font || 'Times New Roman';
-      const fontSize = options.fontSize || 24; // Half-points (24 = 12pt)
-
-      // html-to-docx is more reliable when styles are applied directly to elements.
-      // The font and fontSize options here act as a general document default.
-      const fullHtml = `
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <meta charset="utf-8">
-          </head>
-          <body>${htmlContent || ''}</body>
-        </html>`;
-        
-      // Use empty strings instead of null for header/footer to avoid internal library "null to object" errors
-      const docxBuffer = await htmlToDocx(fullHtml, '', '', {
-        title: 'Scriptum Document',
-        orientation: 'portrait',
-        margins: { top: 1440, right: 1440, bottom: 1440, left: 1440 }, // Standard 1-inch margins
-        font: options.font || 'Times New Roman',
-        fontSize: fontSize,
-        decodeEntities: true
-      })
-
-      // Ensure we are writing a valid Buffer
-      const buffer = Buffer.isBuffer(docxBuffer) ? docxBuffer : Buffer.from(docxBuffer);
-      await fs.writeFile(filePath, buffer)
-      
-      return true
-    } catch (error) { throw error }
+  ipcMain.handle('export:docx', async (_, filePath, markdown, options = {}) => {
+    const buffer = await mdToDocxBuffer(markdown, options)
+    await fs.writeFile(filePath, buffer)
+    return true
   })
 }
 
