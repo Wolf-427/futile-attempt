@@ -12,7 +12,7 @@
   --mono:'SF Mono','Fira Code',monospace;
   --r:4px;--r2:8px;--r3:12px;
   --th:52px;--sw:220px;
-  --paper-bg: #1c1c18; --paper-tx: var(--tx);
+  --paper-bg: #1c1c18; --paper-tx: var(--tx); --desk-bg: var(--bg);
   --paper-line: rgba(255,255,255,0.07); /* Default dark paper line */
 }
 
@@ -20,7 +20,7 @@
   --bg:#fdfdfc; --bg1:#f5f4f0; --bg2:#ecebe4; --bg3:#e4e2d9; --bgh:#dedcd0; --bga:#d6d4c4;
   --b0:rgba(0,0,0,0.05); --b1:rgba(0,0,0,0.08); --b2:rgba(0,0,0,0.15);
   --tx:#1a1a18; --tx2:#5a5852; --tx3:#9a9890;
-  --paper-bg: #f5f4f0; /* Default light paper background */
+  --paper-bg: #f5f4f0; --desk-bg: var(--bg);
   --paper-line: rgba(0,0,0,0.06);
 }
 
@@ -28,6 +28,7 @@
 .editor-page-wrap {
   color: var(--paper-tx);
   display: block;
+  background: transparent !important;
 }
 .editor-page-wrap.paper-light {
   --paper-bg: #ffffff;
@@ -163,23 +164,81 @@ textarea,input{font-family:var(--sans);}
 .editor-tool:hover{background:var(--bgh);color:var(--tx);}
 .editor-tool.active{background:var(--bga);color:var(--accent);}
 .editor-div{width:1px;height:16px;background:var(--b0);margin:0 4px;flex-shrink:0;}
-.editor-scroll{flex:1;overflow-y:auto;background:var(--bg);display:flex;flex-direction:column;align-items:center;padding:48px 24px 80px;}
+.editor-scroll{flex:1;overflow-y:auto;background:var(--bg);display:flex;flex-direction:column;align-items:center;padding:0 0 200px;}
 .editor-empty{flex:1;display:flex;align-items:center;justify-content:center;color:var(--tx3);font-style:italic;}
 .editor-status{display:flex;gap:16px;padding:5px 20px;border-top:1px solid var(--b0);background:var(--bg1);font-size:11px;color:var(--tx3);flex-shrink:0;}
-.ProseMirror{outline:none;font-family:var(--serif);font-size:18px;line-height:1.8;color:inherit;caret-color:var(--accent);}
-.ProseMirror h1{font-size:32px;font-weight:500;line-height:1.25;margin:0 0 24px !important;letter-spacing:-0.02em;}
-.ProseMirror h2{font-size:24px;font-weight:500;margin:0 0 24px !important;}
-.ProseMirror h3{font-size:18px;font-weight:500;margin:0 0 16px !important;font-style:italic;color:var(--tx2);}
-.ProseMirror p{margin:0 0 20px !important;}
-.ProseMirror > *, .ProseMirror p, .ProseMirror h1, .ProseMirror h2, .ProseMirror h3 { margin-top: 0 !important; }
+.ProseMirror {
+  outline: none; font-family: var(--serif); font-size: 18px; line-height: 1.8;
+  color: inherit; caret-color: var(--accent); 
+  padding: 0 !important; margin: 0 !important;
+  width: 100%; min-height: 100%;
+}
+#tiptap-target { position: relative; width: 100%; padding: 0; margin: 0; }
+
+/* ── Tiled Desk Rendering ────────────────────────────────────────────────── */
+#editor-desk {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 0; /* Behind the ProseMirror text */
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  user-select: none;
+}
+
+.page-tile {
+  width: 100%;
+  background: var(--paper-bg);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* Ensure the editor content sits above the tiles */
+#tiptap-target {
+  position: relative;
+  z-index: 1;
+}
+
+.ProseMirror h1{font-size:32px;font-weight:500;line-height:1.2;margin:0 0 24px !important; padding:0 !important; letter-spacing:-0.02em;}
+.ProseMirror h2{font-size:24px;font-weight:500;margin:0 0 20px !important; padding:0 !important;}
+.ProseMirror h3{font-size:18px;font-weight:500;margin:0 0 16px !important; padding:0 !important; font-style:italic;color:var(--tx2);}
+.ProseMirror p{margin:0 0 16px !important; padding:0 !important;}
+
+/* Force all blocks to not collapse margins */
+.ProseMirror > * { margin-top: 0 !important; display: flow-root; }
+
+/* Only zero out the very first element of the editor to prevent top-page drift */
+.ProseMirror > *:first-child { margin-top: 0 !important; }
 .ProseMirror p:last-child{margin-bottom:0;}
 .ProseMirror strong{font-weight:600;}
+
+/* Style HR as a non-printing manual page break */
+.ProseMirror hr {
+  border: none;
+  border-top: 2px dashed var(--accent) !important;
+  opacity: 0.4;
+  margin: 16px 0 !important;
+  height: 0;
+  cursor: default;
+}
+.ProseMirror hr.ProseMirror-selectednode {
+  opacity: 1;
+}
 .ProseMirror em{font-style:italic;}
 .ProseMirror blockquote{border-left:2px solid var(--accent);margin:24px 0;padding:4px 0 4px 20px;color:var(--tx2);font-style:italic;}
 .ProseMirror ul,.ProseMirror ol{padding-left:24px;margin:0 0 20px;}
 .ProseMirror li{margin-bottom:6px;}
 .ProseMirror code{font-family:var(--mono);font-size:14px;background:var(--bg2);border:1px solid var(--b0);border-radius:var(--r);padding:1px 5px;color:var(--accent);}
 .ProseMirror p.is-empty::before{content:attr(data-placeholder);color:var(--tx3);pointer-events:none;float:left;height:0;font-style:italic;}
+
+/* Hide manual breaks when they land at the top of a page to prevent gap drift */
+.page-auto-spacer + hr {
+  display: none !important;
+}
 
 /* Canvas */
 .canvas-wrap{display:flex;flex-direction:column;height:100%;background:var(--bg);}
@@ -295,31 +354,14 @@ hr.page-break{border:none;border-top:2px dashed rgba(201,169,110,0.3);margin:0;w
   pointer-events: none;
   user-select: none;
 }
-/* Page Number in Editor */
-.page-number-indicator {
-  position: absolute;
-  left: -76px; /* Positioned in the center of the left margin gutter */
-  width: 60px;
-  text-align: left;
-  font-size: 12px;
-  color: var(--tx3);
-  font-family: var(--mono);
-  pointer-events: none;
-  user-select: none;
-  white-space: nowrap;
-  z-index: 10;
-  display: block;
-  height: 0; 
-  line-height: 1;
-  margin-top: -0.5em; /* Center vertically on the line math */
-  overflow: visible;
-}
 
 /* Fix "Top margin too big" on new pages by removing double-spacing */
 .page-auto-spacer + *, 
 .page-break-node + *, 
 .page-break-spacer + *,
 .page-auto-spacer + p,
+.page-auto-spacer + h1,
+.page-auto-spacer + h2,
 .page-auto-spacer + h1,
 .page-auto-spacer + h2 {
   margin-top: 0 !important;
