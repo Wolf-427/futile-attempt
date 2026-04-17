@@ -20,6 +20,13 @@ export const Editor = {
     { label: 'Inter', value: '"Inter", sans-serif' },
     { label: 'Georgia', value: 'Georgia, serif' },
   ],
+  SPELLCHECK_LANGS: [
+    { label: 'English (US)', value: 'en-US' },
+    { label: 'English (UK)', value: 'en-GB' },
+    { label: 'German', value: 'de-DE' },
+    { label: 'French', value: 'fr-FR' },
+    { label: 'Spanish', value: 'es-ES' },
+  ],
   MARGIN:   96,
   PAGE_GAP: 32,
   FONT_SIZES: [8,9,10,11,12,14,16,18,20,22,24,26,28,36,48,72],
@@ -29,7 +36,7 @@ export const Editor = {
     return { ...this.PAGE_SIZES.a4, preset: 'a4' }
   },
 
-  mount(container) {
+  async mount(container) {
     container.innerHTML = `
       <div class="editor">
         <div class="editor-toolbar" id="editor-toolbar"></div>
@@ -45,7 +52,11 @@ export const Editor = {
         </div>
       </div>`;
 
+    const savedLangs = await api.store.get('spellcheck-languages').catch(() => []);
+    const initialLang = savedLangs?.[0] || 'en-US';
+
     this.core = new EditorCore(container.querySelector('#tiptap-target'), {
+      lang: initialLang,
       onUpdate: () => this._onUpdate(),
       onSelectionUpdate: () => this._syncToolbar()
     });
@@ -141,6 +152,16 @@ export const Editor = {
       btn('⇤',  () => t.core?.instance?.chain().focus().liftListItem('listItem').run(),    null, 'Outdent'),
     ].forEach(b=>tb.appendChild(b)); tb.appendChild(sep())
 
+    // Spellcheck Language
+    const langSel = document.createElement('select')
+    langSel.className='editor-page-sel'; langSel.title='Spellcheck language'; langSel.style.width='90px'
+    this.SPELLCHECK_LANGS.forEach(l => { const o=document.createElement('option'); o.value=l.value; o.textContent=l.label; langSel.appendChild(o) })
+    api.store.get('spellcheck-languages').then(v => { if(v && v.length) { langSel.value = v[0]; t._applyLanguage(v[0], false) } }).catch(()=>{})
+    langSel.addEventListener('change', async () => {
+      t._applyLanguage(langSel.value)
+    })
+    tb.appendChild(langSel); tb.appendChild(sep())
+
     // Page size
     const pgSel = document.createElement('select')
     pgSel.id='pg-sel'; pgSel.className='editor-page-sel'; pgSel.title='Page size'
@@ -176,6 +197,17 @@ export const Editor = {
       ()=>Store.set('showFormattingChars', !Store.get('showFormattingChars')),
       ()=>Store.get('showFormattingChars'), 'Toggle formatting characters'
     ))
+  },
+
+  async _applyLanguage(lang, persist = true) {
+    if (persist) await api.store.set('spellcheck-languages', [lang]);
+    
+    // Sync root level lang attributes for system hints
+    document.documentElement.lang = lang.split('-')[0];
+    document.body.setAttribute('lang', lang);
+
+    // Hand over the attribute cycle to EditorCore for a robust reset
+    if (this.core) await this.core.setLanguage(lang);
   },
 
   _setFontSize(v) {

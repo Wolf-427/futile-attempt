@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, net } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, shell, net, Menu, MenuItem } = require('electron')
 const path = require('path')
 const fs = require('fs').promises
 const htmlToDocx = require('html-to-docx')
@@ -20,9 +20,53 @@ const createWindow = () => {
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: false,
+      spellcheck: true,
     },
   })
   win.loadFile(path.join(__dirname, 'renderer/index.html'))
+
+  // Initialize Spellchecker from Store
+  readStore().then(s => {
+    // Default to system locale or US English, but avoid mixing them into a multi-lang list
+    const langs = s['spellcheck-languages'] || [app.getLocale()?.replace('_', '-') || 'en-US']
+    const finalLangs = Array.isArray(langs) ? langs : [langs]
+    if (win?.webContents?.session) win.webContents.session.setSpellCheckerLanguages(finalLangs)
+  }).catch(() => {})
+
+  // Spelling Corrector Context Menu
+  win.webContents.on('context-menu', (event, params) => {
+    // Only show the native menu if we are clicking on editable text (the Editor)
+    if (!params.isEditable) return
+
+    const menu = new Menu()
+
+    // Add spelling suggestions provided by Electron
+    for (const suggestion of params.dictionarySuggestions) {
+      menu.append(new MenuItem({
+        label: suggestion,
+        click: () => win.webContents.replaceMisspelling(suggestion)
+      }))
+    }
+
+    if (params.dictionarySuggestions.length > 0) {
+      menu.append(new MenuItem({ type: 'separator' }))
+    }
+
+    // Option to add the misspelled word to the local dictionary
+    if (params.misspelledWord) {
+      menu.append(new MenuItem({
+        label: `Add "${params.misspelledWord}" to Dictionary`,
+        click: () => win.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord)
+      }))
+      menu.append(new MenuItem({ type: 'separator' }))
+    }
+
+    menu.append(new MenuItem({ role: 'cut' }))
+    menu.append(new MenuItem({ role: 'copy' }))
+    menu.append(new MenuItem({ role: 'paste' }))
+
+    menu.popup()
+  })
 }
 
 app.whenReady().then(() => {
@@ -44,7 +88,16 @@ const writeStore = async d  => fs.writeFile(STORE_PATH, JSON.stringify(d, null, 
 
 function setupStore() {
   ipcMain.handle('store:get', async (_, k)    => { const s = await readStore(); return k ? s[k] : s })
-  ipcMain.handle('store:set', async (_, k, v) => { const s = await readStore(); s[k] = v; await writeStore(s); return true })
+  ipcMain.handle('store:set', async (_, k, v) => { 
+    const s = await readStore(); 
+    s[k] = v; 
+    await writeStore(s); 
+    if (k === 'spellcheck-languages' && win && !win.isDestroyed()) {
+      const langs = Array.isArray(v) ? v : [v];
+      win.webContents.session.setSpellCheckerLanguages(langs);
+    }
+    return true 
+  })
   ipcMain.handle('store:del', async (_, k)    => { const s = await readStore(); delete s[k]; await writeStore(s); return true })
 }
 

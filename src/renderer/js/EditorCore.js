@@ -1,6 +1,7 @@
 export class EditorCore {
   constructor(element, options = {}) {
     this.container = element;
+    this.initialLang = options.lang || 'en-US';
     this.onUpdate = options.onUpdate || (() => {});
     this.onSelectionUpdate = options.onSelectionUpdate || (() => {});
     this.instance = null;
@@ -31,7 +32,7 @@ export class EditorCore {
         this.paginationExtension,
       ],
       editorProps: {
-        attributes: { class: 'ProseMirror scriptum-editor-v2', spellcheck: 'true' }
+        attributes: { class: 'ProseMirror scriptum-editor-v2', spellcheck: 'true', lang: this.initialLang }
       },
       onUpdate: ({ transaction }) => {
         // STOP the loop: Ignore transactions we sent ourselves
@@ -45,6 +46,33 @@ export class EditorCore {
   setContent(content) { this.instance.commands.setContent(content, false); }
   getHTML() { return this.instance.getHTML(); }
   
+  async setLanguage(lang) {
+    if (!this.instance || this.instance.isDestroyed) return;
+    
+    // Get current attributes and ensure we include the new language
+    const attrs = { 
+      ...this.instance.options.editorProps.attributes,
+      lang: lang 
+    };
+
+    // Sync the DOM attribute immediately to help Chromium detect the change
+    this.container.querySelector('.ProseMirror')?.setAttribute('lang', lang);
+    
+    // 1. Update language and temporarily disable spellcheck to force a reset
+    this.instance.setOptions({
+      editorProps: { attributes: { ...attrs, lang: lang, spellcheck: 'false' } }
+    });
+
+    // 2. Wait for the engine to acknowledge the session-wide change and dictionary load
+    await new Promise(r => setTimeout(r, 600));
+    if (this.instance.isDestroyed) return;
+
+    // 3. Re-enable spellcheck to trigger the re-scan with the new dictionary
+    this.instance.setOptions({
+      editorProps: { attributes: { ...attrs, lang: lang, spellcheck: 'true' } }
+    });
+  }
+
   setDecorations(decorations) {
     if (!this.instance || this.instance.isDestroyed) return;
     
