@@ -46,7 +46,8 @@ const Project = {
   },
 
   async saveBoard(dir, file, data) {
-    await api.fs.write(`${dir}/boards/${file}`, JSON.stringify({ ...data, updated: Date.now() }, null, 2))
+    const { file: _, ...cleanData } = data
+    await api.fs.write(`${dir}/boards/${file}`, JSON.stringify({ ...cleanData, updated: Date.now() }, null, 2))
   },
 
   templates: {

@@ -1,0 +1,10 @@
+export { Editor }          from '@tiptap/core'
+export { Extension }       from '@tiptap/core'
+export { Node }            from '@tiptap/core'
+export { StarterKit }      from '@tiptap/starter-kit'
+export { Underline }       from '@tiptap/extension-underline'
+export { TextAlign }       from '@tiptap/extension-text-align'
+export { Placeholder }     from '@tiptap/extension-placeholder'
+// ProseMirror primitives needed for the pagination plugin
+export { Plugin, PluginKey } from '@tiptap/pm/state'
+export { Decoration, DecorationSet } from '@tiptap/pm/view'

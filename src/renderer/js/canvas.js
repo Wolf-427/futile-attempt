@@ -21,6 +21,12 @@ const Canvas = {
   _history:    [],
   _histIdx:    -1,
   _persistTimer: null,
+  _ARROW_COLORS: {
+    default: {stroke:'rgba(201,169,110,0.8)'},
+    red:     {stroke:'rgba(220,80,80,0.8)'},
+    blue:    {stroke:'rgba(80,140,255,0.8)'},
+    green:   {stroke:'rgba(80,195,120,0.8)'},
+  },
 
   _persistDebounced() {
     clearTimeout(this._persistTimer)
@@ -95,8 +101,49 @@ const Canvas = {
     this._area  = document.getElementById('cv-area')
     this._world = document.getElementById('cv-world')
     this._svg   = document.getElementById('cv-svg')
+    this._ensureSvgDefs()
     this._bindEvents()
     this._load()
+  },
+
+  _ensureSvgDefs() {
+    if (!this._svg) return
+
+    let defs = this._svg.querySelector('defs')
+    if (!defs) {
+      defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs')
+      this._svg.prepend(defs)
+    } else {
+      // Clear existing markers to prevent duplicates on re-render
+      defs.innerHTML = ''
+    }
+
+    for (const key in this._ARROW_COLORS) {
+      const color = this._ARROW_COLORS[key].stroke
+
+      // Unselected marker
+      let marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker')
+      marker.setAttribute('id', `cvmk-${key}`)
+      marker.setAttribute('viewBox', '0 0 10 10')
+      marker.setAttribute('refX', '9')
+      marker.setAttribute('refY', '5')
+      marker.setAttribute('markerWidth', '6')
+      marker.setAttribute('markerHeight', '6')
+      marker.setAttribute('orient', 'auto-start-reverse')
+      let path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+      path.setAttribute('d', 'M 0 0 L 10 5 L 0 10 z')
+      path.setAttribute('fill', color)
+      marker.appendChild(path)
+      defs.appendChild(marker)
+
+      // Selected marker (white)
+      marker = marker.cloneNode(false)
+      marker.setAttribute('id', `cvmk-${key}-sel`)
+      path = path.cloneNode(true)
+      path.setAttribute('fill', '#fff')
+      marker.appendChild(path)
+      defs.appendChild(marker)
+    }
   },
 
   // ── Toolbar ───────────────────────────────────────────────────────────────
@@ -330,11 +377,31 @@ const Canvas = {
       if (this._resize) {
         const dx=e.clientX-this._resize.startX, dy=e.clientY-this._resize.startY
         const node=this._board.nodes.find(n=>n.id===this._resize.id)
-        if (node) { 
-          node.width=Math.max(120,Math.round(this._resize.startW+dx/this._zoom))
-          node.height=Math.max(80,Math.round(this._resize.startH+dy/this._zoom))
+        if (node) {
+          let nw = Math.max(120, Math.round(this._resize.startW + dx / this._zoom))
+          let nh = Math.max(40, Math.round(this._resize.startH + dy / this._zoom))
+
+          // Proportional scaling for images
+          if (node.type === 'image' && node.aspectRatio) {
+            if (Math.abs(dx) > Math.abs(dy)) {
+              nh = Math.round(nw / node.aspectRatio)
+            } else {
+              nw = Math.round(nh * node.aspectRatio)
+            }
+          }
+
           const el=document.getElementById(`pin-${node.id}`)
-          if(el){el.style.width=node.width+'px'; if(node.type==='text'){el.style.minHeight=node.height+'px';el.style.height=''}else{el.style.height=node.height+'px'}}
+          if(el){ 
+          el.style.width=nw+'px'
+          if (node.type === 'text') el.style.minHeight = nh + 'px'
+          else el.style.height=nh+'px'
+
+          // Sync back the ACTUAL physical size to keep arrows attached to visible borders
+          node.width = el.offsetWidth
+          node.height = el.offsetHeight
+        } else {
+          node.width = nw; node.height = nh
+          }
           this._renderArrows() 
         }
         return
@@ -490,14 +557,40 @@ const Canvas = {
 
     document.addEventListener('mousedown', e => { if(!e.target.closest('#canvas-ctx')) this._hideMenu() }, true)
 
-    // Drop
-    this._area.addEventListener('dragover', e => { if(e.dataTransfer.types.includes('text/board-file')||e.dataTransfer.files?.length) e.preventDefault() })
-    this._area.addEventListener('drop', e => {
-      const bf=e.dataTransfer.getData('text/board-file')
-      const r=this._area.getBoundingClientRect()
-      const wx=Math.round((e.clientX-r.left-this._pan.x)/this._zoom), wy=Math.round((e.clientY-r.top-this._pan.y)/this._zoom)
-      if (bf) { e.preventDefault(); const n={id:crypto.randomUUID(),type:'subboard',x:wx-80,y:wy-70,width:160,file:bf,name:e.dataTransfer.getData('text/board-name'),cover:null}; this._board.nodes.push(n); this._renderNode(n); this._snapshot(); this._persist(); return }
-      const f=e.dataTransfer.files?.[0]; if(f?.type.startsWith('image/'))this._dropImage(e,f)
+    // Drop & Paste
+    window.addEventListener('paste', e => {
+      if (Store.get('view') !== 'board') return
+      const tag = document.activeElement?.tagName
+      if (tag === 'TEXTAREA' || tag === 'INPUT' || document.activeElement?.contentEditable === 'true') return
+      const items = e.clipboardData?.items; if (!items) return
+      for (const item of items) if (item.type.startsWith('image/')) this._handleImageSource(item.getAsFile(), { x: window.innerWidth / 2, y: window.innerHeight / 2 })
+    })
+
+    this._area.addEventListener('dragover', e => { 
+      if (e.dataTransfer.types.includes('text/board-file') || e.dataTransfer.types.includes('text/doc-path') || e.dataTransfer.types.includes('Files') || e.dataTransfer.types.includes('text/uri-list')) e.preventDefault() 
+    })
+    this._area.addEventListener('drop', async e => {
+      const bf = e.dataTransfer.getData('text/board-file')
+      const dp = e.dataTransfer.getData('text/doc-path')
+      const pos = { x: e.clientX, y: e.clientY }
+      
+      if (bf) { 
+        e.preventDefault(); const {wx, wy} = this._sw(pos.x, pos.y)
+        const n={id:crypto.randomUUID(),type:'subboard',x:Math.round(wx-80),y:Math.round(wy-70),width:160,file:bf,name:e.dataTransfer.getData('text/board-name'),cover:null}; 
+        this._board.nodes.push(n); this._renderNode(n); this._snapshot(); this._persist(); return 
+      }
+      if (dp) {
+        e.preventDefault(); const {wx, wy} = this._sw(pos.x, pos.y)
+        const n={id:crypto.randomUUID(),type:'doclink',x:Math.round(wx-80),y:Math.round(wy-20),width:180,path:dp,name:e.dataTransfer.getData('text/doc-name')};
+        this._board.nodes.push(n); this._renderNode(n); this._snapshot(); this._persist(); return
+      }
+      if (e.dataTransfer.files?.length) {
+        e.preventDefault(); for (const f of e.dataTransfer.files) if (f.type.startsWith('image/')) this._handleImageSource(f, pos)
+      } else {
+        const html = e.dataTransfer.getData('text/html'), uri = e.dataTransfer.getData('text/uri-list')
+        if (html) { const div = document.createElement('div'); div.innerHTML = html; const img = div.querySelector('img'); if (img?.src) { e.preventDefault(); this._handleImageSource(img.src, pos) } }
+        else if (uri) { e.preventDefault(); this._handleImageSource(uri, pos) }
+      }
     })
 
     // Keyboard shortcuts
@@ -764,6 +857,7 @@ const Canvas = {
       ;['yellow','blue','green','purple'].filter(c=>c!==node.color).forEach(c=>items.push({label:`Change to ${c}`,action:()=>{node.color=c;this._renderNode(node);this._snapshot();this._persist()}}))
       items.push('---')
     }
+    if (node.type==='doclink') { items.push({label:'Open Document', action:()=>{Store.set('docPath', node.path); Store.set('view', 'editor')}}); items.push({label:'Duplicate', action:()=>this._duplicateNode(node)}); items.push('---') }
     if (node.type==='subboard') { items.push({label:'Open board',action:()=>App.openBoard(node.file)}); items.push({label:'Duplicate',action:()=>this._duplicateNode(node)}); items.push('---') }
     if (node.type==='image') { items.push({label:'Duplicate',action:()=>this._duplicateNode(node)}); items.push('---') }
     if (node.type==='group') { items.push({label:'Rename group',action:()=>{this._prompt('Group name:',node.name).then(v=>{if(v){node.name=v;this._renderNode(node);this._persist()}})}}); items.push('---') }
@@ -828,7 +922,8 @@ const Canvas = {
   _toScreen(wx,wy) { return {x:wx*this._zoom+this._pan.x, y:wy*this._zoom+this._pan.y} },
 
   _anchorPos(node, side) {
-    const w=node.width||220, h=node.height||160
+    const w = node.width || (node.type === 'doclink' ? 180 : 220)
+    const h = node.height || (node.type === 'text' ? 60 : (node.type === 'doclink' ? 40 : 160))
     if (side==='top')    return {x:node.x+w/2, y:node.y}
     if (side==='right')  return {x:node.x+w,   y:node.y+h/2}
     if (side==='bottom') return {x:node.x+w/2, y:node.y+h}
@@ -837,8 +932,12 @@ const Canvas = {
   },
 
   _bestAnchorPair(fn, tn) {
-    const fCx=fn.x+(fn.width||220)/2,  fCy=fn.y+(fn.height||160)/2
-    const tCx=tn.x+(tn.width||220)/2,  tCy=tn.y+(tn.height||160)/2
+    const fW = fn.width || (fn.type === 'doclink' ? 180 : 220)
+    const fH = fn.height || (fn.type === 'text' ? 60 : (fn.type === 'doclink' ? 40 : 160))
+    const tW = tn.width || (tn.type === 'doclink' ? 180 : 220)
+    const tH = tn.height || (tn.type === 'text' ? 60 : (tn.type === 'doclink' ? 40 : 160))
+    const fCx = fn.x + fW/2, fCy = fn.y + fH/2
+    const tCx = tn.x + tW/2, tCy = tn.y + tH/2
     const dx=tCx-fCx, dy=tCy-fCy
     if (Math.abs(dx) >= Math.abs(dy)) return dx>=0 ? ['right','left'] : ['left','right']
     return dy>=0 ? ['bottom','top'] : ['top','bottom']
@@ -846,19 +945,11 @@ const Canvas = {
 
   _renderArrows() {
     const svg=this._svg; if(!svg) return
-    // Only clear paths, keep defs/markers
-    const existingPaths = svg.querySelectorAll('path:not(#cv-arrow-preview)')
+    // Only clear top-level arrow paths, keep the markers inside <defs>
+    const existingPaths = svg.querySelectorAll(':scope > path:not(#cv-arrow-preview)')
     existingPaths.forEach(p => p.remove())
     
     const arrows=this._board?.arrows||[]; if(!arrows.length) return
-
-    // Pre-defined colors for the render loop
-    const COLORS = {
-      default: {stroke:'rgba(201,169,110,0.8)'},
-      red:     {stroke:'rgba(220,80,80,0.8)'},
-      blue:    {stroke:'rgba(80,140,255,0.8)'},
-      green:   {stroke:'rgba(80,195,120,0.8)'},
-    }
 
     let barArrow=null, barMx=0, barMy=0
     for (const a of arrows) {
@@ -880,8 +971,8 @@ const Canvas = {
       }
 
       const sel = this._selectedArrow===a.id
-      const ck  = COLORS[a.color]?a.color:'default'
-      const c   = COLORS[ck]
+      const ck  = this._ARROW_COLORS[a.color]?a.color:'default'
+      const c   = this._ARROW_COLORS[ck]
 
       if (sel) {
         const glow=document.createElementNS('http://www.w3.org/2000/svg','path')
@@ -934,19 +1025,13 @@ const Canvas = {
     const bar = this._arrowBar; if (!bar) return
     bar.innerHTML = ''
 
-    const STROKE_COLORS = {
-      default: 'rgba(201,169,110,0.95)',
-      red:     'rgba(220,80,80,0.95)',
-      blue:    'rgba(80,140,255,0.95)',
-      green:   'rgba(80,195,120,0.95)',
-    }
     const cur = arrow.color || 'default'
 
     // Color swatches
-    for (const [key, clr] of Object.entries(STROKE_COLORS)) {
+    for (const [key, clrObj] of Object.entries(this._ARROW_COLORS)) {
       const dot = document.createElement('button')
       dot.title = key[0].toUpperCase() + key.slice(1)
-      dot.style.cssText = `width:13px;height:13px;border-radius:50%;background:${clr};border:2px solid ${cur===key?'#fff':'transparent'};cursor:pointer;padding:0;flex-shrink:0;outline:none;`
+      dot.style.cssText = `width:13px;height:13px;border-radius:50%;background:${clrObj.stroke.replace('0.8', '0.95')};border:2px solid ${cur===key?'#fff':'transparent'};cursor:pointer;padding:0;flex-shrink:0;outline:none;`
       dot.addEventListener('mousedown', e => { e.stopPropagation(); arrow.color=key; this._persist(); this._renderArrows() })
       bar.appendChild(dot)
     }
@@ -1070,7 +1155,29 @@ const Canvas = {
     el?.remove()
   },
 
-  async _dropImage(e,file){const r=this._area.getBoundingClientRect();const wx=Math.round((e.clientX-r.left-this._pan.x)/this._zoom),wy=Math.round((e.clientY-r.top-this._pan.y)/this._zoom);const dest=`${this._dir}/references/${crypto.randomUUID()}-${file.name}`;await api.fs.copy(file.path,dest);const n={id:crypto.randomUUID(),type:'image',x:wx,y:wy,width:240,src:dest};this._board.nodes.push(n);this._renderNode(n);this._snapshot();this._persist()},
+  async _handleImageSource(source, screenPos) {
+    const {wx, wy} = this._sw(screenPos.x, screenPos.y), id = crypto.randomUUID()
+    let dest = `${this._dir}/references/${id}`
+    try {
+      if (source instanceof File && source.path) {
+        dest += `-${source.name}`; await api.fs.copy(source.path, dest)
+      } else {
+        let blob = source
+        if (typeof source === 'string') { const r = await fetch(source); blob = await r.blob() }
+        const ext = blob.type.split('/')[1] || 'png'
+        dest += `-${typeof source === 'string' ? 'web' : 'pasted'}-image.${ext}`
+        const reader = new FileReader()
+        reader.onload = async () => {
+          await api.fs.writeBin(dest, reader.result.split(',')[1])
+          const n = { id, type: 'image', x: Math.round(wx), y: Math.round(wy), width: 240, src: dest }
+          this._board.nodes.push(n); this._renderNode(n); this._snapshot(); this._persist()
+        }
+        reader.readAsDataURL(blob); return
+      }
+      const n = { id, type: 'image', x: Math.round(wx), y: Math.round(wy), width: 240, src: dest }
+      this._board.nodes.push(n); this._renderNode(n); this._snapshot(); this._persist()
+    } catch (e) { console.error('Image add err:', e) }
+  },
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -1094,6 +1201,7 @@ const Canvas = {
     if(n.type==='image')    return this._makeImage(n)
     if(n.type==='subboard') return this._makeSub(n)
     if(n.type==='text')     return this._makeText(n)
+    if(n.type==='doclink')  return this._makeDocLink(n)
     return null
   },
 
@@ -1164,10 +1272,43 @@ const Canvas = {
     return el
   },
 
+  _makeDocLink(n) {
+    const el = document.createElement('div'); el.id = `pin-${n.id}`; el.className = 'pin doclink'
+    el.style.cssText = `left:${n.x}px;top:${n.y}px;width:${n.width||180}px;position:absolute;z-index:2;background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r);padding:8px 12px;cursor:move;display:flex;align-items:center;gap:8px;box-shadow:0 2px 8px rgba(0,0,0,0.2);`
+
+    const icon = document.createElement('span'); icon.textContent = '📄'; icon.style.opacity = '0.7'
+    const lbl = document.createElement('span'); lbl.textContent = n.name; lbl.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:var(--tx2);'
+
+    el.appendChild(icon); el.appendChild(lbl); el.appendChild(this._xBtn(n))
+
+    el.addEventListener('dblclick', e => {
+      e.stopPropagation()
+      Store.set('docPath', n.path)
+      Store.set('view', 'editor')
+    })
+
+    this._addAnchors(el, n)
+    el.addEventListener('mousedown', e => this._startNodeDrag(e, n))
+    el.addEventListener('contextmenu', e => {
+      e.preventDefault(); e.stopPropagation()
+      if(!this._selected.has(n.id)){this._clearSelection();this._selectNode(n.id)}
+      this._showNodeMenu(e.clientX, e.clientY, n)
+    })
+    const ro = new ResizeObserver(() => {
+      const w = el.offsetWidth, h = el.offsetHeight
+      if (w !== n.width || h !== n.height) {
+        n.width = w; n.height = h
+        this._renderArrows(); this._persistDebounced()
+      }
+    })
+    ro.observe(el); el._cleanup = () => ro.disconnect()
+    return el
+  },
+
   _makeText(n) {
     const el = document.createElement('div')
     el.id = `pin-${n.id}`; el.className = 'pin pin-text'
-    el.style.cssText = `left:${n.x}px;top:${n.y}px;width:${n.width||220}px;min-height:${n.height||60}px;position:absolute;z-index:2;display:flex;flex-direction:column;`
+    el.style.cssText = `left:${n.x}px;top:${n.y}px;width:${n.width||220}px;min-height:${n.height||60}px;height:auto;position:absolute;z-index:2;display:flex;flex-direction:column;`
 
     const content = document.createElement('div')
     content.className = 'pin-text-content'
@@ -1289,8 +1430,19 @@ const Canvas = {
     })
     el.appendChild(this._resizeHandle(n))
 
-    // Clean up floating fmt bar when node is removed
-    el._cleanup = () => fmt.remove()
+    // Sync actual rendered size (including text expansion) back to data model
+    const ro = new ResizeObserver(() => {
+      const w = el.offsetWidth, h = el.offsetHeight
+      if (w !== n.width || h !== n.height) {
+        n.width = w; n.height = h
+        this._renderArrows()
+        this._persistDebounced()
+      }
+    })
+    ro.observe(el)
+
+    // Clean up observers and UI when node is removed
+    el._cleanup = () => { fmt.remove(); ro.disconnect() }
 
     return el
   },
@@ -1391,11 +1543,28 @@ const Canvas = {
 
   _makeImage(n) {
     const el=document.createElement('div');el.id=`pin-${n.id}`;el.className='pin pin-img'
-    el.style.cssText=`left:${n.x}px;top:${n.y}px;width:${n.width||240}px;position:absolute;z-index:2;`
-    const bar=document.createElement('div');bar.className='pin-bar';const lbl=document.createElement('span');lbl.className='pin-label';lbl.style.color='var(--tx2)';lbl.textContent='Image'
-    bar.appendChild(lbl);bar.appendChild(this._xBtn(n));el.appendChild(bar)
-    const ph=document.createElement('div');ph.style.cssText='height:80px;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--tx3);';ph.textContent='Loading…';el.appendChild(ph)
-    api.fs.readBin(n.src).then(b=>{const img=document.createElement('img');img.src=`data:image/jpeg;base64,${b}`;img.draggable=false;img.style.cssText='display:block;width:100%;border-radius:0 0 6px 6px;';ph.replaceWith(img)}).catch(()=>{ph.textContent='Not found'})
+    el.style.cssText=`left:${n.x}px;top:${n.y}px;width:${n.width||240}px;height:${n.height?n.height+'px':'auto'};position:absolute;z-index:2;display:flex;flex-direction:column;`
+    
+    // Floating delete corner instead of title bar
+    const del = document.createElement('button'); del.className='pin-text-del-corner'
+    del.textContent='×'; del.addEventListener('mousedown', e=>e.stopPropagation())
+    del.onclick=()=>{ this._removeNode(n.id); this._snapshot(); this._persist() }
+    el.appendChild(del)
+
+    const ph=document.createElement('div');ph.style.cssText='flex:1;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--tx3);min-height:80px;';ph.textContent='Loading…';el.appendChild(ph)
+    
+    const fullPath = n.src.startsWith('/') ? n.src : `${this._dir}/${n.src}`
+    const img = document.createElement('img')
+    img.src = `file://${fullPath}`; img.draggable = false
+    img.style.cssText = 'display:block;width:100%;height:100%;object-fit:contain;border-radius:8px;'
+    img.onload = () => {
+      ph.replaceWith(img)
+      n.aspectRatio = img.naturalWidth / img.naturalHeight
+      if (!n.height) { n.height = Math.round(n.width / n.aspectRatio); el.style.height = n.height + 'px'; this._persist() }
+    }
+    img.onerror = () => ph.textContent = 'Not found'
+
+    el.appendChild(this._resizeHandle(n))
     this._addAnchors(el,n);el.addEventListener('mousedown',e=>this._startNodeDrag(e,n))
     el.addEventListener('contextmenu',e=>{e.preventDefault();e.stopPropagation();if(!this._selected.has(n.id)){this._clearSelection();this._selectNode(n.id)};this._showNodeMenu(e.clientX,e.clientY,n)})
     return el

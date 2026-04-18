@@ -3,6 +3,9 @@ const Store = {
     projects: [], activeId: null, docPath: null,
     boardFile: 'master.json', boardStack: [],
     view: 'editor', sidebar: true,
+    theme: 'dark', paperTheme: 'auto',
+    visibleMargins: false,
+    showFormattingChars: false,
     git: { dirty: false, branch: 'main', syncing: false, error: null }
   },
   _listeners: [],
@@ -12,6 +15,7 @@ const Store = {
   get(k) { return k ? this._data[k] : this._data },
 
   set(k, v) {
+    if (this._data[k] === v) return
     this._data[k] = v
     if (k !== 'git') this._notify(k)
     this.save()
@@ -19,6 +23,7 @@ const Store = {
 
   patch(k, v) {
     if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+      // Note: Deep equality check could go here, but for Git state simple patch is fine
       this._data[k] = { 
         ...(typeof this._data[k] === 'object' ? this._data[k] : {}), 
         ...v 
@@ -52,8 +57,10 @@ const Store = {
         if (d.sidebar !== undefined) this._data.sidebar = d.sidebar
         if (d.boardFile) this._data.boardFile = d.boardFile
         if (d.docPath) this._data.docPath = d.docPath
-        // Restore activeId immediately — verify existence async separately
-        if (d.activeId) this._data.activeId = d.activeId
+        if (d.theme) this._data.theme = d.theme
+        if (d.paperTheme) this._data.paperTheme = d.paperTheme
+        if (d.visibleMargins !== undefined) this._data.visibleMargins = d.visibleMargins
+        if (d.showFormattingChars !== undefined) this._data.showFormattingChars = d.showFormattingChars
       }
     } catch(e) { console.error('Store loadSync error:', e) }
   },
@@ -83,10 +90,13 @@ const Store = {
       try {
         localStorage.setItem('scriptum-store', JSON.stringify({
           projects:  this._data.projects,
-          activeId:  this._data.activeId,
           docPath:   this._data.docPath,
           sidebar:   this._data.sidebar,
           boardFile: this._data.boardFile,
+          theme:     this._data.theme,
+          paperTheme: this._data.paperTheme,
+          visibleMargins: this._data.visibleMargins,
+          showFormattingChars: this._data.showFormattingChars,
         }))
       } catch(e) { console.error('Store save error:', e) }
     }, 100)
