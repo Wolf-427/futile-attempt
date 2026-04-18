@@ -46,5 +46,5 @@ contextBridge.exposeInMainWorld('api', {
     onRecheck:   (cb)     => ipcRenderer.on('spellcheck:recheck', cb),
     onReplace:      (cb)  => ipcRenderer.on('spellcheck:replace', (_, data) => cb(data)),
     openDictionaryFolder: () => ipcRenderer.invoke('spellcheck:openDictionaryFolder'),
-  }
+  },
 })

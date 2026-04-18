@@ -27,14 +27,26 @@ async function loadDictionary(lang) {
   const affPath = path.join(dictDir, `${lang}.aff`)
   const dicPath = path.join(dictDir, `${lang}.dic`)
 
+  // Known-correct word per language — used to validate a custom dictionary file
+  const PROBE = { 'de-DE': 'Straße', 'en-US': 'house', 'en-GB': 'colour', 'fr-FR': 'maison', 'es-ES': 'casa' }
+
   let dict
   try {
     const [aff, dic] = await Promise.all([fs.readFile(affPath), fs.readFile(dicPath)])
-    dict = { aff, dic }
-    console.log(`[spellcheck] loaded custom dictionary for ${lang} from ${dictDir}`)
+    const probe = nspell({ aff, dic })
+    if (probe.correct(PROBE[lang] || 'the')) {
+      dict = { aff, dic }
+      console.log(`[spellcheck] loaded custom dictionary for ${lang} from ${dictDir}`)
+    } else {
+      console.log(`[spellcheck] custom dictionary for ${lang} failed validation — falling back to npm package`)
+    }
   } catch {
+    // no custom files present
+  }
+
+  if (!dict) {
     const pkg = DICT_PACKAGES[lang] || DICT_PACKAGES['en-US']
-    console.log(`[spellcheck] no custom files at ${affPath} — using npm package ${pkg}`)
+    console.log(`[spellcheck] using npm package ${pkg}`)
     const mod = await import(pkg)
     dict = mod.default
   }
@@ -50,7 +62,7 @@ function spellSuggest(spell, word) {
     const candidate = word.slice(0, i) + "'" + word.slice(i)
     if (spell.correct(candidate)) contractions.push(candidate)
   }
-  const base = spell.suggest(word).filter(s => !contractions.includes(s))
+  const base = spell.suggest(word).filter(s => !s.includes('\uFFFD') && !contractions.includes(s))
   return [...contractions, ...base].slice(0, 6)
 }
 
@@ -75,18 +87,25 @@ function setupSpellcheck() {
   ipcMain.handle('spellcheck:checkWords',  async (_, words) => {
     const spell = await spellReady.catch(() => null)
     if (!spell) return []
-    return words.filter(w => !spell.correct(w))
+    const result = words.filter(w => {
+      const nfc = w.normalize('NFC')
+      if (spell.correct(nfc)) return false
+      const cap = nfc.charAt(0).toUpperCase() + nfc.slice(1)
+      return !spell.correct(cap)
+    })
+    return result
   })
   ipcMain.handle('spellcheck:suggest', async (_, word) => {
     const spell = await spellReady.catch(() => null)
-    return spell ? spellSuggest(spell, word) : []
+    return spell ? spellSuggest(spell, word.normalize('NFC')) : []
   })
   ipcMain.handle('spellcheck:addWord', async (_, word) => {
     const spell = await spellReady.catch(() => null)
-    if (spell) spell.add(word)
+    const nfc = word.normalize('NFC')
+    if (spell) spell.add(nfc)
     const s = await readStore()
     const custom = s['spell-custom-words'] || []
-    if (!custom.includes(word)) { s['spell-custom-words'] = [...custom, word]; await writeStore(s) }
+    if (!custom.includes(nfc)) { s['spell-custom-words'] = [...custom, nfc]; await writeStore(s) }
     return true
   })
 }
@@ -100,6 +119,7 @@ const createWindow = () => {
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 16 },
     backgroundColor: '#0f0f0d',
+    icon: path.join(__dirname, '../assets/icon.icns'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -116,55 +136,10 @@ const createWindow = () => {
     spellSetLanguage(lang)
   }).catch(() => { spellSetLanguage('en-US') })
 
-  // Context menu — async so we can fetch suggestions from nspell before popup
-  win.webContents.on('context-menu', async (event, params) => {
+  // Fallback context menu for editable elements outside the editor (e.g. input fields)
+  win.webContents.on('context-menu', (event, params) => {
     if (!params.isEditable) return
-
-    // Ask the renderer which .spell-error word (if any) is under the cursor
-    let wordInfo = null
-    try {
-      wordInfo = await win.webContents.executeJavaScript(`
-        (() => {
-          const el = document.elementFromPoint(${params.x}, ${params.y})
-          const span = el && el.closest('.spell-error')
-          if (!span) return null
-          return {
-            word: span.dataset.word || span.textContent.trim(),
-            from: parseInt(span.dataset.from),
-            to:   parseInt(span.dataset.to),
-          }
-        })()
-      `)
-    } catch {}
-
     const menu = new Menu()
-
-    if (wordInfo) {
-      const spell = await spellReady.catch(() => null)
-      const suggestions = spell ? spellSuggest(spell, wordInfo.word) : []
-
-      for (const s of suggestions) {
-        menu.append(new MenuItem({
-          label: s,
-          click: () => win.webContents.send('spellcheck:replace', { from: wordInfo.from, to: wordInfo.to, replacement: s })
-        }))
-      }
-      if (suggestions.length) menu.append(new MenuItem({ type: 'separator' }))
-
-      menu.append(new MenuItem({
-        label: `Add "${wordInfo.word}" to Dictionary`,
-        click: async () => {
-          const spell = await spellReady.catch(() => null)
-          if (spell) spell.add(wordInfo.word)
-          const s = await readStore()
-          const custom = s['spell-custom-words'] || []
-          if (!custom.includes(wordInfo.word)) { s['spell-custom-words'] = [...custom, wordInfo.word]; await writeStore(s) }
-          win.webContents.send('spellcheck:recheck')
-        }
-      }))
-      menu.append(new MenuItem({ type: 'separator' }))
-    }
-
     menu.append(new MenuItem({ role: 'cut' }))
     menu.append(new MenuItem({ role: 'copy' }))
     menu.append(new MenuItem({ role: 'paste' }))

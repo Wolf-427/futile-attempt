@@ -37,8 +37,13 @@ export const Editor = {
   },
 
   async mount(container) {
+    // Expose a promise that loadDoc() can await — prevents it running before this.core exists
+    let _resolveMountReady
+    this._mountReady = new Promise(r => { _resolveMountReady = r })
+
     container.innerHTML = `
       <div class="editor">
+        <div class="focus-mode-strip" id="focus-mode-strip"></div>
         <div class="editor-toolbar" id="editor-toolbar"></div>
         <div class="editor-scroll" id="editor-scroll">
           <div class="editor-page-wrap" id="editor-page-wrap">
@@ -67,10 +72,165 @@ export const Editor = {
     this.paginator = new Paginator(this.core);
     this._buildToolbar();
     this._applyPageSize();
+    this._setupFocusMode();
+    this._initContextMenu();
     Store.sub(['visibleMargins', 'showFormattingChars', 'paperTheme', 'theme'], async () => {
       await this._applyPageSize();
       this._updateUI();
     });
+
+    _resolveMountReady()
+  },
+
+  _setupFocusMode() {
+    const editorEl = document.querySelector('.editor');
+    const strip = document.getElementById('focus-mode-strip');
+
+    // Restore persisted state
+    api.store.get('focus-mode').then(v => { if (v) editorEl?.classList.add('focus-mode') }).catch(() => {})
+
+    // Hover strip — peek at toolbar while in focus mode
+    if (strip) {
+      const tb = document.getElementById('editor-toolbar')
+      strip.addEventListener('mouseenter', () => editorEl?.classList.add('toolbar-peek'))
+      strip.addEventListener('mouseleave', (e) => {
+        if (tb && tb.contains(e.relatedTarget)) return
+        editorEl?.classList.remove('toolbar-peek')
+      })
+      if (tb) {
+        tb.addEventListener('mouseleave', (e) => {
+          if (strip.contains(e.relatedTarget)) return
+          editorEl?.classList.remove('toolbar-peek')
+        })
+      }
+    }
+
+    // Keyboard shortcut Cmd+Shift+F
+    document.addEventListener('keydown', e => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'f') {
+        e.preventDefault()
+        this._toggleFocusMode()
+      }
+    })
+  },
+
+  _toggleFocusMode() {
+    const editorEl = document.querySelector('.editor')
+    if (!editorEl) return
+    const isOn = editorEl.classList.toggle('focus-mode')
+    editorEl.classList.remove('toolbar-peek')
+    api.store.set('focus-mode', isOn).catch(() => {})
+    // Update button state
+    const btn = document.getElementById('focus-mode-btn')
+    if (btn) btn.classList.toggle('active', isOn)
+  },
+
+  _initContextMenu() {
+    let menu = document.getElementById('editor-ctx')
+    if (!menu) {
+      menu = document.createElement('div')
+      menu.id = 'editor-ctx'
+      menu.className = 'editor-ctx-bar'
+      menu.style.display = 'none'
+      document.body.appendChild(menu)
+    }
+    document.addEventListener('mousedown', e => {
+      if (!e.target.closest('#editor-ctx')) this._hideCtxMenu()
+    }, true)
+
+    const pm = document.querySelector('.ProseMirror')
+    if (pm) {
+      pm.addEventListener('contextmenu', async e => {
+        e.preventDefault()
+        await this._onContextMenu(e)
+      })
+    }
+  },
+
+  _hideCtxMenu() {
+    const m = document.getElementById('editor-ctx')
+    if (m) m.style.display = 'none'
+  },
+
+  _showCtxMenu(cx, cy, groups) {
+    const menu = document.getElementById('editor-ctx')
+    if (!menu) return
+    menu.innerHTML = ''
+
+    const sep = () => {
+      const d = document.createElement('div'); d.className = 'editor-ctx-sep'; menu.appendChild(d)
+    }
+
+    groups.forEach((group, gi) => {
+      if (gi > 0) sep()
+      for (const item of group) {
+        const btn = document.createElement('button')
+        btn.className = 'text-fmt-btn editor-ctx-btn'
+        if (item.checked) btn.classList.add('active')
+        if (item.danger)  btn.style.color = 'var(--err)'
+        btn.innerHTML = item.icon
+        btn.title = item.label
+        btn.onclick = () => { this._hideCtxMenu(); item.action() }
+        menu.appendChild(btn)
+      }
+    })
+
+    menu.style.display = 'flex'
+    menu.style.left = cx + 'px'
+    menu.style.top  = cy + 'px'
+    requestAnimationFrame(() => {
+      const r = menu.getBoundingClientRect()
+      if (r.right  > window.innerWidth)  menu.style.left = (cx - r.width)  + 'px'
+      if (r.bottom > window.innerHeight) menu.style.top  = (cy - r.height) + 'px'
+    })
+  },
+
+  async _onContextMenu(e) {
+    const groups = []
+    const ed = this.core?.instance
+
+    // Spell suggestions — text chips
+    const span = e.target.closest('.spell-error')
+    if (span) {
+      const word = span.dataset.word || span.textContent.trim()
+      const from = parseInt(span.dataset.from)
+      const to   = parseInt(span.dataset.to)
+      const suggestions = await api.spellcheck.suggest(word).catch(() => [])
+      const spellGroup = []
+      for (const s of suggestions) {
+        spellGroup.push({
+          icon: `<span style="font-size:11px;font-family:var(--sans)">${s}</span>`,
+          label: s,
+          action: () => { const tr = ed.state.tr.insertText(s, from, to); ed.view.dispatch(tr) }
+        })
+      }
+      spellGroup.push({
+        icon: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+        label: `Add "${word}" to Dictionary`,
+        action: () => api.spellcheck.addWord(word)
+      })
+      if (spellGroup.length) groups.push(spellGroup)
+    }
+
+    // Formatting
+    if (ed && !ed.state.selection.empty) {
+      groups.push([
+        { icon: '<strong>B</strong>', label: 'Bold',            checked: ed.isActive('bold'),      action: () => ed.chain().focus().toggleBold().run() },
+        { icon: '<em>I</em>',         label: 'Italic',          checked: ed.isActive('italic'),    action: () => ed.chain().focus().toggleItalic().run() },
+        { icon: '<u>U</u>',           label: 'Underline',       checked: ed.isActive('underline'), action: () => ed.chain().focus().toggleUnderline().run() },
+        { icon: '<s>S</s>',           label: 'Strikethrough',   checked: ed.isActive('strike'),    action: () => ed.chain().focus().toggleStrike().run() },
+        { icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 5H9l-7 7 7 7h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2z"/><line x1="18" y1="9" x2="12" y2="15"/><line x1="12" y1="9" x2="18" y2="15"/></svg>', label: 'Clear Formatting', action: () => ed.chain().focus().unsetAllMarks().run() },
+      ])
+    }
+
+    // Clipboard
+    groups.push([
+      { icon: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="20" r="2"/><circle cx="6" cy="4" r="2"/><line x1="6" y1="6" x2="6" y2="18"/><line x1="6" y1="12" x2="18" y2="4"/><line x1="6" y1="12" x2="18" y2="20"/></svg>', label: 'Cut',   action: () => document.execCommand('cut') },
+      { icon: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>', label: 'Copy',  action: () => document.execCommand('copy') },
+      { icon: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>', label: 'Paste', action: () => document.execCommand('paste') },
+    ])
+
+    if (groups.length) this._showCtxMenu(e.clientX, e.clientY, groups)
   },
 
   _buildToolbar() {
@@ -90,7 +250,6 @@ export const Editor = {
     fsSel.className='editor-page-sel'; fsSel.title='Font size'; fsSel.style.width='58px'
     this.FONT_SIZES.forEach(sz => { const o=document.createElement('option'); o.value=sz; o.textContent=sz; fsSel.appendChild(o) })
     fsSel.value=12
-    api.store.get('editor-font-size').then(v => { if(v){fsSel.value=v; this._setFontSize(v)} }).catch(()=>{})
     fsSel.addEventListener('change', () => {
       this._setFontSize(fsSel.value)
     })
@@ -168,7 +327,17 @@ export const Editor = {
       () => api.spellcheck.openDictionaryFolder(),
       null, 'Open dictionary folder'
     )
-    tb.appendChild(langSel); tb.appendChild(dictBtn); tb.appendChild(sep())
+    const spellToggleBtn = btn(
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><text x="2" y="16" font-size="13" font-family="serif" fill="currentColor" stroke="none">abc</text><line x1="2" y1="19" x2="22" y2="19" stroke-width="1.5"/></svg>',
+      () => t._applySpellcheckEnabled(!t._spellEnabled),
+      () => t._spellEnabled,
+      'Toggle spellcheck'
+    )
+    t._spellEnabled = true
+    api.store.get('spellcheck-enabled').then(v => {
+      if (v === false) t._applySpellcheckEnabled(false, false)
+    }).catch(() => {})
+    tb.appendChild(langSel); tb.appendChild(dictBtn); tb.appendChild(spellToggleBtn); tb.appendChild(sep())
 
     // Page size
     const pgSel = document.createElement('select')
@@ -197,7 +366,7 @@ export const Editor = {
     tb.appendChild(sep())
     tb.appendChild(btn(
       '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="2 2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>',
-      ()=>Store.set('visibleMargins', !Store.get('visibleMargins')), 
+      ()=>Store.set('visibleMargins', !Store.get('visibleMargins')),
       ()=>Store.get('visibleMargins'), 'Toggle visible margins'
     ))
     tb.appendChild(btn(
@@ -205,6 +374,17 @@ export const Editor = {
       ()=>Store.set('showFormattingChars', !Store.get('showFormattingChars')),
       ()=>Store.get('showFormattingChars'), 'Toggle formatting characters'
     ))
+
+    // Focus mode toggle
+    const focusBtn = btn(
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>',
+      () => t._toggleFocusMode(),
+      () => document.querySelector('.editor')?.classList.contains('focus-mode'),
+      'Focus mode (⌘⇧F)'
+    )
+    focusBtn.id = 'focus-mode-btn'
+    api.store.get('focus-mode').then(v => { if (v) focusBtn.classList.add('active') }).catch(() => {})
+    tb.appendChild(focusBtn)
   },
 
   async _applyLanguage(lang, persist = true) {
@@ -213,19 +393,23 @@ export const Editor = {
     if (this.core) await this.core.setLanguage(lang);
   },
 
+  async _applySpellcheckEnabled(enabled, persist = true) {
+    this._spellEnabled = enabled
+    if (persist) await api.store.set('spellcheck-enabled', enabled).catch(() => {})
+    this.core?.setSpellcheckEnabled(enabled)
+    const langSel = document.querySelector('.editor-toolbar select[title="Spellcheck language"]')
+    if (langSel) langSel.disabled = !enabled
+    this._syncToolbar()
+  },
+
   _setFontSize(v) {
-    if (this.core?.instance) {
-      const { from, to } = this.core.instance.state.selection
-      if (from !== to) {
-        // Text selected — apply as inline mark, don't touch the global default
-        this.core.setFontSize(v)
-        return
-      }
-    }
-    // No selection — change the whole-document default and persist it
     const pm = document.querySelector('.ProseMirror')
     if (pm) pm.style.fontSize = v + 'px'
-    api.store.set('editor-font-size', v).catch(() => {})
+    if (this._docPath) api.store.set(`editor-font-size:${this._docPath}`, v).catch(() => {})
+    if (this.core?.instance) {
+      const { from, to } = this.core.instance.state.selection
+      if (from !== to) this.core.setFontSize(v)
+    }
   },
 
   _setFontFamily(v) {
@@ -335,6 +519,9 @@ export const Editor = {
   },
 
   async loadDoc(path) {
+    // Wait for mount() to finish — renderEditor doesn't await mount(), so core may not exist yet
+    if (this._mountReady) await this._mountReady
+
     this._docPath = path
     try {
       const html = this._md2html(await api.fs.read(path))
@@ -346,14 +533,23 @@ export const Editor = {
     this._updateUI()
 
     try {
-      const v = await api.store.get('editor-font-size')
-      if (v) { this._setFontSize(v); const s=document.querySelector('.editor-page-sel[title="Font size"]'); if(s) s.value=v }
+      const v = await api.store.get(`editor-font-size:${path}`)
+      const sz = v || 12
+      this._setFontSize(sz)
+      const s = document.querySelector('.editor-page-sel[title="Font size"]'); if(s) s.value=sz
     } catch {}
     try {
       const f = await api.store.get('editor-font-family')
       if (f) { this._setFontFamily(f); const s=document.querySelector('.editor-page-sel[title="Font family"]'); if(s) s.value=f }
     } catch {}
     requestAnimationFrame(()=>this.core.instance.commands.focus('end'))
+
+    // Re-paginate after fonts finish loading — on first startup fonts may not
+    // be ready when the 150ms debounce fires, causing wrong line-height measurements.
+    document.fonts.ready.then(() => {
+      clearTimeout(this._paginateTimer)
+      this._paginateTimer = setTimeout(() => this.paginator.refresh(), 50)
+    })
   },
 
   async _save() {

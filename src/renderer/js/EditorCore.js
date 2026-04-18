@@ -69,6 +69,7 @@ export class EditorCore {
       },
       onSelectionUpdate: ({ editor }) => this.onSelectionUpdate(editor)
     });
+    window.__tiptapEditor = this.instance;
   }
 
   setContent(content) { this.instance.commands.setContent(content, false); }
@@ -82,6 +83,10 @@ export class EditorCore {
   getActiveFontSize() {
     if (!this.instance || this.instance.isDestroyed) return null
     return this.instance.getAttributes('fontSize').size || null
+  }
+
+  setSpellcheckEnabled(val) {
+    this._spellcheckExt?.setEnabled?.(val)
   }
 
   async setLanguage(lang) {

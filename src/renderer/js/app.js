@@ -64,6 +64,13 @@ const App = {
     const view = Store.get('view')
     const isSettings = view === 'settings'
 
+    // Pre-load all cover paths before touching the DOM — avoids async DOM-patching race
+    // where a second render() call wipes the elements before the loop can find them
+    const covers = {}
+    await Promise.all(projects.map(async p => {
+      try { const c = await api.store.get(`project-cover-path-${p.id}`); if (c && await api.fs.exists(c)) covers[p.id] = c } catch {}
+    }))
+
     root.innerHTML = `
       <div class="splash">
         <div class="splash-drag"></div>
@@ -114,7 +121,9 @@ const App = {
                     ${[...projects].reverse().map((p, i) => `
                       <div class="splash-card" data-id="${p.id}" data-index="${i}">
                         <div class="splash-card-thumb">
-                          <div class="splash-card-empty" id="cover-${p.id}"><span>S</span></div>
+                          ${covers[p.id]
+                            ? `<img src="file://${covers[p.id]}" class="splash-card-img" id="cover-${p.id}" draggable="false">`
+                            : `<div class="splash-card-empty" id="cover-${p.id}"><span>S</span></div>`}
                           <button class="splash-card-set-cover" data-id="${p.id}" title="Set cover image">Set cover</button>
                           <button class="splash-card-remove" data-id="${p.id}" title="Remove from recents">✕</button>
                         </div>
@@ -228,21 +237,6 @@ const App = {
       }, 5000)
     }
 
-    // Load covers async
-    ;(async () => {
-      for (const p of projects) {
-        try {
-          const coverPath = await api.store.get(`project-cover-path-${p.id}`)
-          if (!coverPath) continue
-          const el = document.getElementById(`cover-${p.id}`)
-          if (!el) continue
-          const img = document.createElement('img')
-          img.src = `file://${coverPath}`; img.className = 'splash-card-img'; img.draggable = false
-          img.onerror = () => {}
-          el.replaceWith(img)
-        } catch {}
-      }
-    })()
   },
   _showNewForm() {
     document.getElementById('splash-form').classList.remove('hidden')
@@ -862,7 +856,13 @@ const App = {
     if (container.querySelector('.canvas-wrap') && container.dataset.file === boardFile) {
       return
     }
-    
+
+    // Flush any pending editor save before wiping the DOM — the debounce may not
+    // have fired yet, and switching back creates a fresh core that would lose changes
+    clearTimeout(Editor._saveTimer)
+    Editor._saveTimer = null
+    Editor._save().catch(() => {})
+
     container.innerHTML = '' // Clear for the canvas mount
     container.dataset.file = boardFile
     Canvas.mount(container, project.dir, boardFile)

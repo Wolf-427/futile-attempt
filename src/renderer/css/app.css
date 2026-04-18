@@ -158,7 +158,7 @@ textarea,input{font-family:var(--sans);}
 .btn-sm.danger{border-color:rgba(224,112,112,.3);color:var(--err);}
 
 /* Editor */
-.editor{display:flex;flex-direction:column;height:100%;background:var(--bg);}
+.editor{display:flex;flex-direction:column;height:100%;background:var(--bg);position:relative;}
 .editor-toolbar{display:flex;align-items:center;gap:2px;padding:6px 16px;border-bottom:1px solid var(--b0);background:var(--bg1);flex-shrink:0;}
 .editor-tool{padding:4px 8px;border:none;border-radius:var(--r);font-size:12px;font-weight:500;background:transparent;color:var(--tx3);min-width:26px;text-align:center;}
 .editor-tool:hover{background:var(--bgh);color:var(--tx);}
@@ -530,7 +530,7 @@ hr.page-break{border:none;border-top:2px dashed rgba(201,169,110,0.3);margin:0;w
 .template-btn:hover { background: var(--bgh); color: var(--tx); }
 
 /* ── Font size slider ──────────────────────────────────────────────────────── */
-input[type=range].editor-font-size { -webkit-appearance: none; width: 72px; height: 3px; background: var(--b1); border-radius: 2px; outline: none; margin: 0 6px; }
+input[type=range].editor-font-size { -webkit-appearance: none; appearance: none; width: 72px; height: 3px; background: var(--b1); border-radius: 2px; outline: none; margin: 0 6px; }
 input[type=range].editor-font-size::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: var(--accent); cursor: pointer; }
 
 /* ── Splash card remove btn ────────────────────────────────────────────────── */
@@ -681,6 +681,16 @@ input[type=range].editor-font-size::-webkit-slider-thumb { -webkit-appearance: n
 .ctx-item.ctx-danger { color:var(--err); }
 .ctx-item.ctx-danger:hover { background:rgba(224,112,112,.1); }
 .ctx-kbd { font-size:10px; color:var(--tx3); font-family:var(--mono); margin-left:auto; }
+.editor-ctx-bar {
+  position: fixed; z-index: 99999;
+  display: none; align-items: center; gap: 1px;
+  padding: 4px 6px;
+  background: var(--bg2); border: 1px solid var(--b2);
+  border-radius: var(--r2); box-shadow: 0 4px 16px rgba(0,0,0,.5);
+  pointer-events: all;
+}
+.editor-ctx-sep { width:1px; height:16px; background:var(--b1); margin:0 3px; flex-shrink:0; }
+.editor-ctx-btn.active { color: var(--accent); }
 .ctx-sep { height:1px; background:var(--b0); margin:4px 0; }
 
 /* ── Marquee selection ─────────────────────────────────────────────────────── */
@@ -911,3 +921,13 @@ html.is-exporting {
 }
 /* Hide underlines in exported documents */
 .is-exporting .spell-error { text-decoration: none; }
+
+/* ── Focus mode ──────────────────────────────────────────────────────────── */
+.editor-toolbar { transition: max-height 0.2s ease, opacity 0.15s ease, padding 0.2s ease; overflow: hidden; max-height: 200px; }
+.editor.focus-mode .editor-toolbar { max-height: 0; opacity: 0; padding-top: 0 !important; padding-bottom: 0 !important; border-bottom-color: transparent; pointer-events: none; }
+.editor.focus-mode.toolbar-peek .editor-toolbar { max-height: 200px; opacity: 1; padding: 6px 16px !important; pointer-events: auto; border-bottom-color: var(--b0); }
+.focus-mode-strip {
+  display: none;
+  position: absolute; top: 0; left: 0; right: 0; height: 8px; z-index: 20; cursor: default;
+}
+.editor.focus-mode .focus-mode-strip { display: block; }

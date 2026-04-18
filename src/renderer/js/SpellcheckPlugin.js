@@ -1,5 +1,6 @@
-// Word boundary regex: Latin + extended Latin + straight apostrophe + curly apostrophes
-const WORD_RE = /[a-zA-ZÀ-ÖØ-öø-ÿ\u0100-\u024F'\u2018\u2019]+/g
+// \p{M} captures combining diacritics (NFD) so "Wo\u0308rter" matches as one token.
+// The u flag is required for \p{...} Unicode property escapes.
+const WORD_RE = /[a-zA-ZÀ-ÖØ-öø-ÿ\u0100-\u024F\p{M}'\u2018\u2019]+/gu
 
 function extractWords(doc) {
   const words = []
@@ -8,11 +9,15 @@ function extractWords(doc) {
     WORD_RE.lastIndex = 0
     let m
     while ((m = WORD_RE.exec(node.text)) !== null) {
-      // Strip leading/trailing apostrophes (straight or curly)
-      const raw = m[0].replace(/^['\u2018\u2019]+|['\u2018\u2019]+$/g, '')
+      // Strip leading/trailing apostrophes (straight or curly), then NFC-normalise
+      // so dictionary lookups always receive precomposed characters.
+      const raw = m[0].replace(/^['\u2018\u2019]+|['\u2018\u2019]+$/g, '').normalize('NFC')
       if (raw.length < 2 || /^\d+$/.test(raw)) continue
-      const leadTrim = m[0].length - m[0].replace(/^['\u2018\u2019]+/, '').length
-      words.push({ word: raw, from: pos + m.index + leadTrim, to: pos + m.index + leadTrim + raw.length })
+      const leadTrim  = m[0].length - m[0].replace(/^['\u2018\u2019]+/, '').length
+      const trailTrim = m[0].length - m[0].replace(/['\u2018\u2019]+$/, '').length
+      // Use original match length (not NFC raw.length) so positions map back to
+      // the actual document offsets even when the text is in NFD form.
+      words.push({ word: raw, from: pos + m.index + leadTrim, to: pos + m.index + m[0].length - trailTrim })
     }
   })
   return words
@@ -125,8 +130,15 @@ export function createSpellcheckExtension(spellApi) {
     addProseMirrorPlugins: () => [plugin]
   })
 
+  function setEnabled(val) {
+    enabled = val
+    if (!val && currentView) dispatch(currentView, DecorationSet.empty)
+    else if (val && currentView) schedule(currentView, 0)
+  }
+
   // Attach forceRecheck so EditorCore can call it after a language switch
   extension.forceRecheck = forceRecheck
+  extension.setEnabled = setEnabled
 
   return extension
 }

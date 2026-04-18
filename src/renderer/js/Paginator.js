@@ -75,10 +75,8 @@ export class Paginator {
       page.setAttribute('data-page-number', i + 1);
       desk.appendChild(page);
     }
-     // Ensure the container expands to fit the desk so scrolling works correctly
+    // Ensure the container expands to fit the desk so scrolling works correctly
     const totalDeskHeight = (pageCount * this.config.pageHeight) + ((pageCount - 1) * this.config.pageGap);
     wrap.style.minHeight = totalDeskHeight + 'px';
-
-    
   }
 }
