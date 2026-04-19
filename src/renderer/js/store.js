@@ -3,7 +3,7 @@ const Store = {
     projects: [], activeId: null, docPath: null,
     boardFile: 'master.json', boardStack: [],
     view: 'editor', sidebar: true,
-    theme: 'dark', paperTheme: 'auto',
+    theme: 'dark', paperTheme: 'auto', accentName: null, coverBgEnabled: true,
     visibleMargins: false,
     showFormattingChars: false,
     git: { dirty: false, branch: 'main', syncing: false, error: null }
@@ -59,6 +59,8 @@ const Store = {
         if (d.docPath) this._data.docPath = d.docPath
         if (d.theme) this._data.theme = d.theme
         if (d.paperTheme) this._data.paperTheme = d.paperTheme
+        if (d.accentName) this._data.accentName = d.accentName
+        if (d.coverBgEnabled !== undefined) this._data.coverBgEnabled = d.coverBgEnabled
         if (d.visibleMargins !== undefined) this._data.visibleMargins = d.visibleMargins
         if (d.showFormattingChars !== undefined) this._data.showFormattingChars = d.showFormattingChars
       }
@@ -95,6 +97,8 @@ const Store = {
           boardFile: this._data.boardFile,
           theme:     this._data.theme,
           paperTheme: this._data.paperTheme,
+          accentName: this._data.accentName,
+          coverBgEnabled: this._data.coverBgEnabled,
           visibleMargins: this._data.visibleMargins,
           showFormattingChars: this._data.showFormattingChars,
         }))

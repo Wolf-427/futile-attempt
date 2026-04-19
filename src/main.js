@@ -147,7 +147,9 @@ const createWindow = () => {
   })
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  const { session } = require('electron')
+  await session.defaultSession.clearCache()
   createWindow()
   setupStore()
   setupFs()
