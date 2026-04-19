@@ -5,7 +5,7 @@ const App = {
     // Ensure the last active project still exists on disk before rendering
     await Store.verifyProject()
 
-    Store.sub(['activeId', 'view', 'sidebar', 'boardFile', 'boardStack', 'docPath', 'theme', 'paperTheme'], () => {
+    Store.sub(['activeId', 'view', 'sidebar', 'boardFile', 'boardStack', 'docPath', 'theme', 'paperTheme', 'accentName', 'coverBgEnabled'], () => {
       this._applyTheme()
       this.render()
     })
@@ -29,6 +29,15 @@ const App = {
 
   _applyTheme() {
     document.body.classList.toggle('light-mode', Store.get('theme') === 'light')
+    const colors = Settings.accentColors
+    let c = colors.find(c => c.name === Store.get('accentName'))
+    if (!c) {
+      c = colors[0]
+      Store._data.accentName = colors[0].name
+      Store.save()
+    }
+    document.documentElement.style.setProperty('--accent', c.hex)
+    document.documentElement.style.setProperty('--accent-rgb', c.rgb)
   },
 
   _bindGlobalKeys() {
@@ -119,13 +128,11 @@ const App = {
                 ? `<div class="splash-empty">No recent projects yet.<br>Create your first project to get started.</div>`
                 : `<div class="splash-grid">
                     ${[...projects].reverse().map((p, i) => `
-                      <div class="splash-card" data-id="${p.id}" data-index="${i}">
+                      <div class="splash-card" data-id="${p.id}" data-dir="${p.dir}" data-index="${i}">
                         <div class="splash-card-thumb">
                           ${covers[p.id]
                             ? `<img src="file://${covers[p.id]}" class="splash-card-img" id="cover-${p.id}" draggable="false">`
                             : `<div class="splash-card-empty" id="cover-${p.id}"><span>S</span></div>`}
-                          <button class="splash-card-set-cover" data-id="${p.id}" title="Set cover image">Set cover</button>
-                          <button class="splash-card-remove" data-id="${p.id}" title="Remove from recents">✕</button>
                         </div>
                         <div class="splash-card-meta">
                           <div class="splash-card-name" title="${p.name}">${p.name}</div>
@@ -164,48 +171,93 @@ const App = {
       }
     }
 
+    // Inline rename helper
+    const _startCardRename = (card) => {
+      const nameEl = card.querySelector('.splash-card-name')
+      if (!nameEl) return
+      const id = card.dataset.id
+      const dir = card.dataset.dir
+      const currentName = nameEl.textContent
+
+      const inp = document.createElement('input')
+      inp.value = currentName
+      inp.className = 'splash-card-name-input'
+      nameEl.replaceWith(inp)
+      inp.focus(); inp.select()
+
+      const commit = async () => {
+        const newName = inp.value.trim()
+        const finalName = newName || currentName
+        if (newName && newName !== currentName) {
+          try {
+            Store._data.projects = Store.get('projects').map(p => p.id === id ? { ...p, name: newName } : p)
+            Store.save()
+            const manifest = JSON.parse(await api.fs.read(`${dir}/scriptum.json`))
+            manifest.name = newName
+            await api.fs.write(`${dir}/scriptum.json`, JSON.stringify(manifest, null, 2))
+          } catch (err) { console.error('Project rename failed:', err) }
+        }
+        const newNameEl = document.createElement('div')
+        newNameEl.className = 'splash-card-name'
+        newNameEl.title = finalName
+        newNameEl.textContent = finalName
+        inp.replaceWith(newNameEl)
+        newNameEl.addEventListener('dblclick', (e) => { e.stopPropagation(); _startCardRename(card) })
+      }
+
+      inp.onblur = commit
+      inp.onkeydown = (e) => {
+        if (e.key === 'Enter') inp.blur()
+        if (e.key === 'Escape') { inp.value = currentName; inp.blur() }
+      }
+      inp.onmousedown = (e) => e.stopPropagation()
+      inp.onclick = (e) => e.stopPropagation()
+    }
+
     // Open project cards
     document.querySelectorAll('.splash-card').forEach(card => {
       card.addEventListener('click', e => {
-        if (e.target.closest('.splash-card-set-cover') || e.target.closest('.splash-card-remove')) return
+        if (e.target.closest('.splash-card-name')) return
         const id = card.dataset.id
-        // Update last opened timestamp
         Store._data.projects = Store.get('projects').map(p => p.id === id ? { ...p, updatedAt: Date.now() } : p)
+        Store._data.docPath = null; Store._data.boardFile = 'master.json'; Store._data.boardStack = []
         Store.save()
         Store.set('activeId', id)
       })
-    })
 
-    // Remove from recents
-    document.querySelectorAll('.splash-card-remove').forEach(btn => {
-      btn.addEventListener('click', async e => {
+      // Double-click name to rename
+      card.querySelector('.splash-card-name')?.addEventListener('dblclick', (e) => {
         e.stopPropagation()
-        const id = btn.dataset.id
-        Store._data.projects = Store.get('projects').filter(p => p.id !== id)
-        Store.save()
-        // Remove card from DOM without full re-render
-        btn.closest('.splash-card').remove()
-        if (Store.get('projects').length === 0) {
-          document.querySelector('.splash-grid')?.replaceWith(
-            Object.assign(document.createElement('div'), { className: 'splash-empty', innerHTML: 'No recent projects yet.<br>Create your first project to get started.' })
-          )
-        }
+        _startCardRename(card)
       })
-    })
 
-    // Set cover image
-    document.querySelectorAll('.splash-card-set-cover').forEach(btn => {
-      btn.addEventListener('click', async e => {
-        e.stopPropagation()
-        const id = btn.dataset.id
-        const fp = await api.dialog.file([{ name: 'Images', extensions: ['jpg','jpeg','png','webp','gif'] }])
-        if (!fp) return
-        await api.store.set(`project-cover-path-${id}`, fp)
-        const el = document.getElementById(`cover-${id}`)
-        const img = document.createElement('img')
-        img.src = `file://${fp}`; img.className = 'splash-card-img'; img.draggable = false
-        if (el) el.replaceWith(img)
-        else btn.closest('.splash-card-thumb').prepend(img)
+      // Right-click context menu
+      card.addEventListener('contextmenu', e => {
+        e.preventDefault(); e.stopPropagation()
+        const id = card.dataset.id
+        this._showSidebarMenu(e.clientX, e.clientY, [
+          { label: 'Rename', action: () => _startCardRename(card) },
+          { label: 'Set Cover', action: async () => {
+            const fp = await api.dialog.file([{ name: 'Images', extensions: ['jpg','jpeg','png','webp','gif'] }])
+            if (!fp) return
+            await api.store.set(`project-cover-path-${id}`, fp)
+            const el = document.getElementById(`cover-${id}`)
+            const img = document.createElement('img')
+            img.src = `file://${fp}`; img.className = 'splash-card-img'; img.draggable = false
+            if (el) el.replaceWith(img)
+            else card.querySelector('.splash-card-thumb').prepend(img)
+          }},
+          { label: 'Hide from Recents', danger: true, action: () => {
+            Store._data.projects = Store.get('projects').filter(p => p.id !== id)
+            Store.save()
+            card.remove()
+            if (Store.get('projects').length === 0) {
+              document.querySelector('.splash-grid')?.replaceWith(
+                Object.assign(document.createElement('div'), { className: 'splash-empty', innerHTML: 'No recent projects yet.<br>Create your first project to get started.' })
+              )
+            }
+          }}
+        ])
       })
     })
 
@@ -262,6 +314,7 @@ const App = {
       const folder = await api.dialog.folder()
       if (!folder) { btn.textContent = 'Choose folder →'; btn.disabled = false; return }
       const p = await Project.create(name, folder)
+      Store._data.docPath = null; Store._data.boardFile = 'master.json'; Store._data.boardStack = []
       Store._data.projects = [...Store.get('projects'), { id: p.id, name: p.name, dir: p.dir, updatedAt: Date.now() }]
       Store.save()
       Store.set('activeId', p.id)
@@ -278,6 +331,7 @@ const App = {
       if (!folder) return
       const p = await Project.open(folder)
       const existing = Store.get('projects').find(x => x.dir === folder)
+      Store._data.docPath = null; Store._data.boardFile = 'master.json'; Store._data.boardStack = []
       if (existing) { Store.set('activeId', existing.id); return }
       Store._data.projects = [...Store.get('projects'), { id: p.id, name: p.name, dir: p.dir, updatedAt: Date.now() }]
       Store.save()
@@ -408,6 +462,8 @@ const App = {
     addBoardBtn.onclick = async () => {
       const boards = await Project.readBoards(project.dir)
       const b = await Project.newBoard(project.dir, `Board ${boards.filter(x=>!x.isMaster).length+1}`)
+      const sc = document.getElementById('sidebar-container')
+      if (sc) sc.dataset.projectId = ''
       this.openBoard(b.file)
     }
     boardsHdr.appendChild(boardsLbl); boardsHdr.appendChild(addBoardBtn); boardsSection.appendChild(boardsHdr)
@@ -780,6 +836,8 @@ const App = {
     if (file === 'master.json') return alert('The Master board cannot be deleted.')
     if (!confirm('Delete this board? All nodes and arrows on this specific board will be lost.')) return
     await api.fs.delete(`${projectDir}/boards/${file}`)
+    const sc = document.getElementById('sidebar-container')
+    if (sc) sc.dataset.projectId = ''
     if (Store.get('boardFile') === file) {
       Store._data.boardFile = 'master.json'
       Store._data.boardStack = []
@@ -823,10 +881,12 @@ const App = {
       const newOrder = [...order]
       const [item] = newOrder.splice(fromIdx, 1)
       newOrder.splice(toIdx, 0, item)
-      
+
       const projects = Store.get('projects').map(p => p.id === project.id ? { ...p, docOrder: newOrder } : p)
       Store._data.projects = projects
       Store.save()
+      const sc = document.getElementById('sidebar-container')
+      if (sc) sc.dataset.projectId = ''
       this.render()
     }
   },
@@ -848,6 +908,27 @@ const App = {
       container.dataset.path = docPath
       Editor.loadDoc(docPath)
     }
+    this._applyCoverBg(project)
+  },
+
+  async _applyCoverBg(project) {
+    const img = document.getElementById('editor-cover-bg-img')
+    if (!img) return
+    if (!Store.get('coverBgEnabled')) {
+      img.classList.remove('visible')
+      return
+    }
+    try {
+      const coverPath = await api.store.get(`project-cover-path-${project.id}`)
+      if (coverPath && await api.fs.exists(coverPath)) {
+        img.style.backgroundImage = `url(${JSON.stringify(coverPath)})`
+        img.classList.add('visible')
+      } else {
+        img.classList.remove('visible')
+      }
+    } catch {
+      img.classList.remove('visible')
+    }
   },
 
   renderBoard(container, project) {
@@ -866,6 +947,15 @@ const App = {
     container.innerHTML = '' // Clear for the canvas mount
     container.dataset.file = boardFile
     Canvas.mount(container, project.dir, boardFile)
+  },
+
+  refreshSidebar() {
+    const s = Store.get()
+    const project = (s.projects || []).find(p => p.id === s.activeId)
+    if (!project) return
+    const sc = document.getElementById('sidebar-container')
+    if (sc) sc.dataset.projectId = ''
+    this.renderSidebar(project)
   },
 
   openBoard(file, push=true) {

@@ -1,9 +1,25 @@
 const Settings = {
+  accentColors: [
+    { name: 'Crimson', hex: '#ab0909' },
+    { name: 'Amber',   hex: '#c9a96e' },
+    { name: 'Blue',    hex: '#5b8dd9' },
+    { name: 'Green',   hex: '#6bbf8e' },
+    { name: 'Mauve',   hex: '#9b72cf' },
+    { name: 'Ember',   hex: '#e0853c' },
+    { name: 'Teal',    hex: '#4db8b8' },
+  ].map(c => {
+    const n = parseInt(c.hex.slice(1), 16)
+    return { ...c, rgb: `${(n>>16)&255},${(n>>8)&255},${n&255}` }
+  }),
+
   async mount(container, project = null) {
     const version = await api.app.version().catch(() => '0.1.0')
     const token   = await api.store.get('gh-token').catch(() => null)
     const theme = Store.get('theme')
     const paperTheme = Store.get('paperTheme')
+    const coverBgEnabled = Store.get('coverBgEnabled')
+    const accentColors = this.accentColors
+    const currentHex = (accentColors.find(c => c.name === Store.get('accentName')) ?? accentColors[0]).hex
 
     container.innerHTML = `
       <div class="settings">
@@ -18,7 +34,16 @@ const Settings = {
               <option value="light" ${theme==='light'?'selected':''}>Light</option>
             </select>
           </div>
-          <div class="settings-row">
+          <div class="settings-row" style="margin-top:12px">
+            <div style="flex:1">
+              <div class="settings-note" style="margin:0">Accent Color</div>
+            </div>
+            <div class="accent-swatches" id="accent-swatches">
+              ${accentColors.map(c => `<button class="accent-swatch${currentHex === c.hex ? ' active' : ''}" data-hex="${c.hex}" data-rgb="${c.rgb}" title="${c.name}" style="background:${c.hex}"></button>`).join('')}
+            </div>
+          </div>
+
+          <div class="settings-row" style="margin-top:12px">
             <div style="flex:1">
               <div class="settings-note" style="margin:0">Editor Paper</div>
               <div style="font-size:10px;color:var(--tx3)">The writing area background</div>
@@ -28,6 +53,17 @@ const Settings = {
               <option value="dark" ${paperTheme==='dark'?'selected':''}>Always Dark</option>
               <option value="light" ${paperTheme==='light'?'selected':''}>Always Light</option>
             </select>
+          </div>
+
+          <div class="settings-row" style="margin-top:12px">
+            <div style="flex:1">
+              <div class="settings-note" style="margin:0">Cover Background</div>
+              <div style="font-size:10px;color:var(--tx3)">Blurred project cover behind the editor</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="setting-cover-bg" ${coverBgEnabled ? 'checked' : ''}/>
+              <span class="toggle-track"></span>
+            </label>
           </div>
         </div>
 
@@ -72,11 +108,21 @@ const Settings = {
     })
     document.getElementById('clear-token')?.addEventListener('click', async () => { await api.store.del('gh-token'); location.reload() })
 
+    document.querySelectorAll('.accent-swatch').forEach(btn => {
+      btn.addEventListener('click', () => {
+        Store.set('accentName', btn.title)
+        document.querySelectorAll('.accent-swatch').forEach(b => b.classList.toggle('active', b === btn))
+      })
+    })
+
     document.getElementById('setting-theme')?.addEventListener('change', (e) => {
       Store.set('theme', e.target.value)
     })
     document.getElementById('setting-paper')?.addEventListener('change', (e) => {
       Store.set('paperTheme', e.target.value)
+    })
+    document.getElementById('setting-cover-bg')?.addEventListener('change', (e) => {
+      Store.set('coverBgEnabled', e.target.checked)
     })
 
     document.getElementById('check-update').addEventListener('click', async () => {

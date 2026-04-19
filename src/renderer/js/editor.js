@@ -41,8 +41,10 @@ export const Editor = {
     let _resolveMountReady
     this._mountReady = new Promise(r => { _resolveMountReady = r })
 
+    this._freshMount = true
     container.innerHTML = `
-      <div class="editor">
+      <div class="editor editor-enter">
+        <div class="editor-cover-bg" id="editor-cover-bg"><div class="editor-cover-bg-img" id="editor-cover-bg-img"></div></div>
         <div class="focus-mode-strip" id="focus-mode-strip"></div>
         <div class="editor-toolbar" id="editor-toolbar"></div>
         <div class="editor-scroll" id="editor-scroll">
@@ -522,11 +524,19 @@ export const Editor = {
     // Wait for mount() to finish — renderEditor doesn't await mount(), so core may not exist yet
     if (this._mountReady) await this._mountReady
 
+    const scroll = document.querySelector('.editor-scroll')
+    const isFresh = this._freshMount
+    this._freshMount = false
+    if (!isFresh && scroll) scroll.classList.add('doc-fade')
+
     this._docPath = path
-    try {
-      const html = this._md2html(await api.fs.read(path))
-      this.core.setContent(html);
-    } catch { this.core.setContent('<p></p>'); }
+    const [html] = await Promise.all([
+      api.fs.read(path).then(c => this._md2html(c)).catch(() => '<p></p>'),
+      isFresh ? Promise.resolve() : new Promise(r => setTimeout(r, 150)),
+    ])
+    if (scroll) scroll.scrollTop = 0
+    this.core.setContent(html)
+    if (!isFresh && scroll) scroll.classList.remove('doc-fade')
 
     this._syncToolbar()
     await this._applyPageSize()
