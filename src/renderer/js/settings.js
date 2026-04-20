@@ -12,6 +12,90 @@ const Settings = {
     return { ...c, rgb: `${(n>>16)&255},${(n>>8)&255},${n&255}` }
   }),
 
+  _fontCache: null,
+
+  async _loadSystemFonts() {
+    if (this._fontCache) return this._fontCache
+    try {
+      if ('queryLocalFonts' in window) {
+        const raw = await window.queryLocalFonts()
+        const seen = new Set()
+        this._fontCache = raw
+          .map(f => f.family)
+          .filter(f => { if (seen.has(f)) return false; seen.add(f); return true })
+          .sort()
+      }
+    } catch(e) {
+      // permission denied or API unavailable
+    }
+    if (!this._fontCache) this._fontCache = []
+    return this._fontCache
+  },
+
+  _initFontPicker(id, fonts, current, storeKey) {
+    const container = document.getElementById(id)
+    if (!container) return
+
+    // Remove any orphaned list from a previous render of this picker
+    document.querySelector(`.font-picker-list[data-picker="${id}"]`)?.remove()
+
+    const display = current || (storeKey === 'editorFont' ? 'Lora' : 'DM Sans')
+    container.innerHTML = `<input class="font-picker-input" type="text" value="${display}" placeholder="Search fonts…" autocomplete="off" spellcheck="false" style="font-family:'${display}',serif"/>`
+    const input = container.querySelector('.font-picker-input')
+
+    // Append list to body so it escapes any overflow:hidden/auto parent
+    const list = document.createElement('div')
+    list.className = 'font-picker-list'
+    list.dataset.picker = id
+    document.body.appendChild(list)
+
+    const position = () => {
+      const r = input.getBoundingClientRect()
+      list.style.top  = `${r.bottom + 4}px`
+      list.style.left = `${Math.max(4, r.right - 220)}px`
+    }
+
+    const showList = (filter) => {
+      const q = (filter || '').toLowerCase()
+      const matches = fonts.filter(f => f.toLowerCase().includes(q)).slice(0, 120)
+      if (!matches.length) { list.style.display = 'none'; return }
+      const active = Store.get(storeKey) || display
+      list.innerHTML = matches.map(f =>
+        `<div class="font-picker-item${f === active ? ' selected' : ''}" data-font="${f}" style="font-family:'${f}',serif">${f}</div>`
+      ).join('')
+      position()
+      list.style.display = 'block'
+      list.querySelector('.selected')?.scrollIntoView({ block: 'nearest' })
+    }
+
+    input.addEventListener('focus', () => showList(input.value))
+    input.addEventListener('input', () => showList(input.value))
+    window.addEventListener('scroll', position, true)
+
+    list.addEventListener('mousedown', (e) => {
+      const item = e.target.closest('.font-picker-item')
+      if (!item) return
+      e.preventDefault()
+      const font = item.dataset.font
+      input.value = font
+      input.style.fontFamily = `'${font}',serif`
+      list.style.display = 'none'
+      Store.set(storeKey, font)
+    })
+
+    input.addEventListener('blur', () => {
+      setTimeout(() => { list.style.display = 'none' }, 150)
+    })
+
+    if (!fonts.length) {
+      input.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return
+        const val = input.value.trim()
+        if (val) { input.style.fontFamily = `'${val}',serif`; Store.set(storeKey, val); input.blur() }
+      })
+    }
+  },
+
   async mount(container, project = null) {
     const version = await api.app.version().catch(() => '0.1.0')
     const token   = await api.store.get('gh-token').catch(() => null)

@@ -5,7 +5,7 @@ const App = {
     // Ensure the last active project still exists on disk before rendering
     await Store.verifyProject()
 
-    Store.sub(['activeId', 'view', 'sidebar', 'boardFile', 'boardStack', 'docPath', 'theme', 'paperTheme', 'accentName', 'coverBgEnabled'], () => {
+    Store.sub(['activeId', 'view', 'sidebar', 'boardFile', 'boardStack', 'docPath', 'theme', 'paperTheme', 'accentName', 'coverBgEnabled', 'editorFont', 'uiFont'], () => {
       this._applyTheme()
       this.render()
     })
@@ -38,6 +38,10 @@ const App = {
     }
     document.documentElement.style.setProperty('--accent', c.hex)
     document.documentElement.style.setProperty('--accent-rgb', c.rgb)
+    const editorFont = Store.get('editorFont')
+    const uiFont = Store.get('uiFont')
+    if (editorFont) document.documentElement.style.setProperty('--serif', `'${editorFont}', Georgia, serif`)
+    if (uiFont) document.documentElement.style.setProperty('--sans', `'${uiFont}', system-ui, sans-serif`)
   },
 
   _bindGlobalKeys() {
@@ -87,7 +91,7 @@ const App = {
 
           <div class="splash-sidebar">
             <div class="splash-logo" style="cursor:pointer" id="splash-logo">
-              <div class="splash-mark">S</div>
+              <img class="splash-mark" src="../../assets/icon.png" alt="Scriptum"/>
               <div class="splash-wordmark">Scriptum</div>
             </div>
             <div class="splash-ver">v${version}</div>

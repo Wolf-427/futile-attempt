@@ -38,6 +38,9 @@ contextBridge.exposeInMainWorld('api', {
     pdf: (filePath, options) => ipcRenderer.invoke('export:pdf', filePath, options),
     docx: (filePath, htmlContent, options) => ipcRenderer.invoke('export:docx', filePath, htmlContent, options),
   },
+  fonts: {
+    list: () => ipcRenderer.invoke('fonts:list'),
+  },
   spellcheck: {
     setLanguage: (lang)   => ipcRenderer.invoke('spellcheck:setLanguage', lang),
     checkWords:  (words)  => ipcRenderer.invoke('spellcheck:checkWords', words),

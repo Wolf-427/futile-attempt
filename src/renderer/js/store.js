@@ -6,6 +6,7 @@ const Store = {
     theme: 'dark', paperTheme: 'auto', accentName: null, coverBgEnabled: true,
     visibleMargins: false,
     showFormattingChars: false,
+    editorFont: null, uiFont: null,
     git: { dirty: false, branch: 'main', syncing: false, error: null }
   },
   _listeners: [],
@@ -63,6 +64,8 @@ const Store = {
         if (d.coverBgEnabled !== undefined) this._data.coverBgEnabled = d.coverBgEnabled
         if (d.visibleMargins !== undefined) this._data.visibleMargins = d.visibleMargins
         if (d.showFormattingChars !== undefined) this._data.showFormattingChars = d.showFormattingChars
+        if (d.editorFont) this._data.editorFont = d.editorFont
+        if (d.uiFont) this._data.uiFont = d.uiFont
       }
     } catch(e) { console.error('Store loadSync error:', e) }
   },
@@ -101,6 +104,8 @@ const Store = {
           coverBgEnabled: this._data.coverBgEnabled,
           visibleMargins: this._data.visibleMargins,
           showFormattingChars: this._data.showFormattingChars,
+          editorFont: this._data.editorFont,
+          uiFont: this._data.uiFont,
         }))
       } catch(e) { console.error('Store save error:', e) }
     }, 100)

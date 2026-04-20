@@ -12,14 +12,8 @@ export const Editor = {
     a4:     { width: 794,  height: 1123 },
     letter: { width: 816,  height: 1056 },
   },
-  FONT_FAMILIES: [
-    { label: 'Lora (Serif)', value: 'var(--serif)' },
-    { label: 'DM Sans', value: 'var(--sans)' },
-    { label: 'Arial', value: 'Arial, sans-serif' },
-    { label: 'Times New Roman', value: '"Times New Roman", serif' },
-    { label: 'Inter', value: '"Inter", sans-serif' },
-    { label: 'Georgia', value: 'Georgia, serif' },
-  ],
+  _fontCache: null,
+  _fontCachePromise: null,
   SPELLCHECK_LANGS: [
     { label: 'English (US)', value: 'en-US' },
     { label: 'English (UK)', value: 'en-GB' },
@@ -72,6 +66,12 @@ export const Editor = {
       onSelectionUpdate: () => this._syncToolbar()
     });
     this.paginator = new Paginator(this.core);
+    // Start loading fonts immediately so they're ready when the picker opens
+    if (!this._fontCachePromise) {
+      this._fontCachePromise = api.fonts.list()
+        .then(f => { this._fontCache = f; return f })
+        .catch(() => { this._fontCache = []; return [] })
+    }
     this._buildToolbar();
     this._applyPageSize();
     this._setupFocusMode();
@@ -257,19 +257,96 @@ export const Editor = {
     })
     tb.appendChild(fsSel); tb.appendChild(sep())
 
-    // Font Family
-    const ffSel = document.createElement('select')
-    ffSel.className='editor-page-sel'; ffSel.title='Font family'; ffSel.style.width='110px'
-    this.FONT_FAMILIES.forEach(f => { const o=document.createElement('option'); o.value=f.value; o.textContent=f.label; ffSel.appendChild(o) })
-    
-    api.store.get('editor-font-family').then(v => { if(v){ffSel.value=v; this._setFontFamily(v)} }).catch(()=>{})
-    
-    ffSel.addEventListener('change', async () => {
-      const val = ffSel.value
-      this._setFontFamily(val)
-      await api.store.set('editor-font-family', val)
+    // Font Family — searchable picker backed by system fonts
+    // Remove any stale dropdown from a previous mount
+    document.querySelector('.font-picker-list[data-picker="editor-ff"]')?.remove()
+
+    const ffWrap = document.createElement('div')
+    ffWrap.style.cssText = 'position:relative;display:inline-flex;align-items:center'
+    const ffInput = document.createElement('input')
+    ffInput.className = 'editor-page-sel'
+    ffInput.type = 'text'
+    ffInput.title = 'Font family'
+    ffInput.style.cssText = 'width:130px;cursor:text'
+    ffInput.autocomplete = 'off'
+    ffInput.spellcheck = false
+    ffInput.placeholder = 'Font…'
+    ffWrap.appendChild(ffInput)
+
+    // Dropdown lives on body so it's never clipped by toolbar overflow
+    const ffList = document.createElement('div')
+    ffList.className = 'font-picker-list'
+    ffList.dataset.picker = 'editor-ff'
+    document.body.appendChild(ffList)
+
+    const ffPosition = () => {
+      const r = ffInput.getBoundingClientRect()
+      ffList.style.top  = `${r.bottom + 2}px`
+      ffList.style.left = `${Math.max(4, r.left)}px`
+      ffList.style.width = '240px'
+    }
+
+    const ffRender = (filter) => {
+      const fonts = this._fontCache
+      if (!fonts) {
+        // Still loading
+        ffList.innerHTML = '<div class="font-picker-loading">Loading fonts…</div>'
+        ffPosition()
+        ffList.style.display = 'block'
+        return
+      }
+      const q = (filter || '').toLowerCase()
+      const matches = q ? fonts.filter(f => f.toLowerCase().includes(q)) : fonts
+      const capped = matches.slice(0, 150)
+      if (!capped.length) { ffList.style.display = 'none'; return }
+      const current = ffInput._selectedFont || ffInput.value
+      ffList.innerHTML = capped.map(f =>
+        `<div class="font-picker-item${f === current ? ' selected' : ''}" data-font="${f}" style="font-family:'${f}',serif">${f}</div>`
+      ).join('')
+      ffPosition()
+      ffList.style.display = 'block'
+      ffList.querySelector('.selected')?.scrollIntoView({ block: 'nearest' })
+    }
+
+    ffInput.addEventListener('focus', () => { ffInput.select(); ffRender('') })
+    ffInput.addEventListener('input', () => ffRender(ffInput.value))
+    window.addEventListener('scroll', ffPosition, true)
+
+    ffList.addEventListener('mousedown', async (e) => {
+      const item = e.target.closest('.font-picker-item')
+      if (!item) return
+      e.preventDefault()
+      const font = item.dataset.font
+      ffInput._selectedFont = font
+      ffInput.value = font
+      ffInput.style.fontFamily = `'${font}',serif`
+      ffList.style.display = 'none'
+      ffInput.blur()
+      this._setFontFamily(font)
+      await api.store.set('editor-font-family', font)
     })
-    tb.appendChild(ffSel); tb.appendChild(sep())
+
+    ffInput.addEventListener('blur', () => {
+      // Restore selected font name if user typed something partial
+      if (ffInput._selectedFont) ffInput.value = ffInput._selectedFont
+      setTimeout(() => { ffList.style.display = 'none' }, 200)
+    })
+
+    // Set initial value from store
+    api.store.get('editor-font-family').then(v => {
+      const name = v && !v.startsWith('var(') && !v.includes(',') ? v : 'Lora'
+      ffInput._selectedFont = name
+      ffInput.value = name
+      ffInput.style.fontFamily = `'${name}',serif`
+      this._setFontFamily(name)
+    }).catch(() => {})
+
+    // When fonts finish loading, refresh the list if the input is still focused
+    this._fontCachePromise.then(() => {
+      if (document.activeElement === ffInput) ffRender(ffInput.value)
+    })
+
+    tb.appendChild(ffWrap); tb.appendChild(sep())
 
     // Paragraph style
     const hSel = document.createElement('select')
@@ -414,9 +491,16 @@ export const Editor = {
     }
   },
 
-  _setFontFamily(v) {
+  _fontNameToCss(name) {
+    if (!name) return 'var(--serif)'
+    // Handle legacy stored CSS values
+    if (name.startsWith('var(') || name.includes(',')) return name
+    return `'${name}', Georgia, serif`
+  },
+
+  _setFontFamily(name) {
     const pm = document.querySelector('.ProseMirror')
-    if (pm) pm.style.fontFamily = v
+    if (pm) pm.style.fontFamily = this._fontNameToCss(name)
   },
 
   _syncToolbar() {
@@ -550,7 +634,11 @@ export const Editor = {
     } catch {}
     try {
       const f = await api.store.get('editor-font-family')
-      if (f) { this._setFontFamily(f); const s=document.querySelector('.editor-page-sel[title="Font family"]'); if(s) s.value=f }
+      if (f) {
+        this._setFontFamily(f)
+        const inp = document.querySelector('input[title="Font family"]')
+        if (inp) { const name = f.startsWith('var(') || f.includes(',') ? 'Lora' : f; inp.value = name; inp.style.fontFamily = `'${name}',serif` }
+      }
     } catch {}
     requestAnimationFrame(()=>this.core.instance.commands.focus('end'))
 
@@ -704,19 +792,13 @@ export const Editor = {
       if(!p) return
       try {
         // Handle cases where the store might be empty (first run)
-        const ff = await api.store.get('editor-font-family') || 'var(--serif)'
+        const ff = await api.store.get('editor-font-family') || 'Lora'
         const fs = await api.store.get('editor-font-size') || 12
-        
-        // Clean the font name for Word (e.g., "Lora (Serif)" -> "Lora") and get font size in points
-        const fontEntry = this.FONT_FAMILIES.find(f => f.value === ff)
-        let fontName = 'Lora' // Default fallback
-        
-        if (fontEntry) {
-          fontName = fontEntry.label.replace(/\s*\(.*\)/, '').trim()
-        } else if (ff.includes('"')) {
-          // Extract name from raw values like '"Inter", sans-serif'
-          fontName = ff.split(',')[0].replace(/"/g, '').trim()
-        }
+        // Extract clean font name from legacy CSS values or use as-is
+        let fontName = ff
+        if (ff.startsWith('var(--serif)')) fontName = 'Lora'
+        else if (ff.startsWith('var(--sans)')) fontName = 'DM Sans'
+        else if (ff.includes(',')) fontName = ff.split(',')[0].replace(/['"]/g, '').trim()
         const fontSizePt = parseInt(fs) || 12
         
         // html-to-docx uses half-points for its fontSize option

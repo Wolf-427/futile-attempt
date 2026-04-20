@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, net, Menu, MenuItem } = require('electron')
 const path = require('path')
+const os = require('os')
 const fs = require('fs').promises
 const fss = require('fs')
 const nspell = require('nspell')
@@ -147,9 +148,116 @@ const createWindow = () => {
   })
 }
 
+// ── Font enumeration ──────────────────────────────────────────────────────────
+async function parseFontFamily(filePath) {
+  let handle
+  try {
+    handle = await fs.open(filePath, 'r')
+
+    // Step 1: read enough to find the sfnt offset table (first 4 KB covers any TTC header + table dir)
+    const hdr = Buffer.alloc(4096)
+    const { bytesRead: hdrRead } = await handle.read(hdr, 0, 4096, 0)
+    const h = hdr.subarray(0, hdrRead)
+
+    // Resolve sfnt start offset (0 for plain TTF/OTF, or from TTC header)
+    let sfnt = 0
+    if (h.length >= 4 && h.toString('ascii', 0, 4) === 'ttcf') {
+      if (h.length < 16) { await handle.close(); return null }
+      sfnt = h.readUInt32BE(12) // offset of first font in collection
+    }
+    if (h.length < sfnt + 12) { await handle.close(); return null }
+
+    // Step 2: locate the 'name' table record
+    const nTables = h.readUInt16BE(sfnt + 4)
+    let nameOff = -1, nameLen = 0
+    for (let i = 0; i < nTables; i++) {
+      const p = sfnt + 12 + i * 16
+      if (p + 16 > h.length) break
+      if (h.toString('ascii', p, p + 4) === 'name') {
+        nameOff = h.readUInt32BE(p + 8)
+        nameLen = h.readUInt32BE(p + 12)
+        break
+      }
+    }
+    if (nameOff < 0) { await handle.close(); return null }
+
+    // Step 3: read the full name table using its declared length
+    const readLen = Math.min(Math.max(nameLen, 4096), 131072) // cap at 128 KB
+    const nb = Buffer.alloc(readLen)
+    const { bytesRead: nRead } = await handle.read(nb, 0, readLen, nameOff)
+    await handle.close()
+    const nameBuf = nb.subarray(0, nRead)
+
+    if (nameBuf.length < 6) return null
+    const nRec = nameBuf.readUInt16BE(2)
+    const strBase = nameBuf.readUInt16BE(4) // offset within nameBuf to string storage
+
+    let family = null, preferred = null
+    for (let i = 0; i < nRec; i++) {
+      const p = 6 + i * 12
+      if (p + 12 > nameBuf.length) break
+      const pid = nameBuf.readUInt16BE(p)
+      const eid = nameBuf.readUInt16BE(p + 2)
+      const nid = nameBuf.readUInt16BE(p + 6)
+      if (nid !== 1 && nid !== 16) continue
+      const len  = nameBuf.readUInt16BE(p + 8)
+      const soff = nameBuf.readUInt16BE(p + 10)
+      const start = strBase + soff
+      if (start + len > nameBuf.length) continue
+      let name
+      if (pid === 3 && eid === 1) {           // Windows UTF-16 BE
+        const b = Buffer.from(nameBuf.subarray(start, start + len))
+        for (let j = 0; j < b.length - 1; j += 2) { const t = b[j]; b[j] = b[j+1]; b[j+1] = t }
+        name = b.toString('utf16le').replace(/\0/g, '').trim()
+      } else if (pid === 1) {                  // Mac Roman
+        name = nameBuf.toString('latin1', start, start + len).trim()
+      }
+      if (!name) continue
+      if (nid === 16 && !preferred) preferred = name
+      else if (nid === 1 && !family) family = name
+      if (preferred && family) break
+    }
+    return preferred || family
+  } catch { try { await handle?.close() } catch {} return null }
+}
+
+async function collectFontFiles(dir, EXTS, results = []) {
+  let entries
+  try { entries = await fs.readdir(dir, { withFileTypes: true }) } catch { return results }
+  await Promise.all(entries.map(async e => {
+    const full = path.join(dir, e.name)
+    if (e.isDirectory()) { await collectFontFiles(full, EXTS, results) }
+    else if (e.isFile() && EXTS.has(path.extname(e.name).toLowerCase())) results.push(full)
+  }))
+  return results
+}
+
+function setupFonts() {
+  ipcMain.handle('fonts:list', async () => {
+    const dirs = process.platform === 'darwin'
+      ? ['/System/Library/Fonts', '/Library/Fonts', path.join(os.homedir(), 'Library/Fonts')]
+      : process.platform === 'win32'
+      ? [path.join(process.env.SystemRoot || 'C:\\Windows', 'Fonts'), path.join(os.homedir(), 'AppData', 'Local', 'Microsoft', 'Windows', 'Fonts')]
+      : ['/usr/share/fonts', '/usr/local/share/fonts', path.join(os.homedir(), '.fonts'), path.join(os.homedir(), '.local/share/fonts')]
+    const EXTS = new Set(['.ttf', '.otf', '.ttc', '.otc'])
+    const seen = new Set()
+    const fonts = []
+    const allFiles = (await Promise.all(dirs.map(d => collectFontFiles(d, EXTS)))).flat()
+    await Promise.all(allFiles.map(async filePath => {
+      const name = await parseFontFamily(filePath)
+      if (name && !seen.has(name)) { seen.add(name); fonts.push(name) }
+    }))
+    return fonts.sort()
+  })
+}
+
 app.whenReady().then(async () => {
   const { session } = require('electron')
   await session.defaultSession.clearCache()
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    if (permission === 'local-fonts') { callback(true); return }
+    callback(false)
+  })
   createWindow()
   setupStore()
   setupFs()
@@ -157,6 +265,7 @@ app.whenReady().then(async () => {
   setupUpdater()
   setupExport()
   setupSpellcheck()
+  setupFonts()
 })
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
