@@ -262,6 +262,7 @@ app.whenReady().then(async () => {
   setupStore()
   setupFs()
   setupDialogs()
+  await seedInstalledSha()
   setupUpdater()
   setupExport()
   setupSpellcheck()
@@ -474,6 +475,15 @@ function setupExport() {
 }
 
 // ── Updater ───────────────────────────────────────────────────────────────────
+async function seedInstalledSha() {
+  const s = await readStore()
+  if (s['installed-sha']) return
+  try {
+    const sha = (await fs.readFile(path.join(__dirname, 'build-sha.txt'), 'utf8')).trim()
+    if (sha) { s['installed-sha'] = sha; await writeStore(s) }
+  } catch {}
+}
+
 function setupUpdater() {
   ipcMain.handle('update:check', async (_, token, owner, repo) => {
     try {

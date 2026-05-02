@@ -1,12 +1,13 @@
 {
   "name": "scriptum",
   "productName": "Scriptum",
-  "version": "0.6.0-alpha",
+  "version": "0.6.1-alpha",
   "description": "A writing app with spatial canvas boards",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
     "bundle": "esbuild src/renderer/js/tiptap.bundle.entry.js --bundle --format=iife --global-name=Tiptap --outfile=src/renderer/js/tiptap.bundle.js --minify",
+    "predist": "git rev-parse HEAD > src/build-sha.txt",
     "dist": "electron-builder --mac"
   },
   "build": {

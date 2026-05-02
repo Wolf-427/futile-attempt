@@ -1,6 +1,7 @@
 node_modules/
 build/
 dist/
+src/build-sha.txt
 .DS_Store
 *.log
 .env.local
