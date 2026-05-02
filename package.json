@@ -1,7 +1,7 @@
 {
   "name": "scriptum",
   "productName": "Scriptum",
-  "version": "0.6.1-alpha",
+  "version": "0.6.2-alpha",
   "description": "A writing app with spatial canvas boards",
   "main": "src/main.js",
   "scripts": {
