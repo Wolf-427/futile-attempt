@@ -503,7 +503,11 @@ function setupUpdater() {
 
   ipcMain.handle('update:apply', async (_, token, owner, repo, sha) => {
     try {
-      const appDir = path.join(__dirname, '..')
+      // In a packaged app __dirname is inside app.asar (a file, not a dir).
+      // Writing to Resources/app/ is safe and takes precedence over app.asar on next launch.
+      const appDir = app.isPackaged
+        ? path.join(process.resourcesPath, 'app')
+        : path.join(__dirname, '..')
       const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'Scriptum' }
       const s = await readStore()
       const installedSha = s['installed-sha']

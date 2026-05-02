@@ -214,7 +214,7 @@ const Settings = {
       if (!token) { this._msg('Save a GitHub token first', 'err'); return }
       this._msg('Checking…', '')
       document.getElementById('update-card').innerHTML = ''
-      const result = await api.updater.check(token, 'Wolf-427', 'futile-attempt')
+      const result = await api.update.check(token, 'Wolf-427', 'futile-attempt')
       if (result.error) { this._msg('Error: ' + result.error, 'err'); return }
       if (!result.hasUpdate) { this._msg('✓ Already up to date', 'ok'); return }
       this._msg('', '')
@@ -236,10 +236,10 @@ const Settings = {
       document.getElementById('apply-btn').addEventListener('click', async () => {
         document.getElementById('apply-btn').disabled = true
         this._msg('Applying update…', '')
-        const r = await api.updater.apply(token, 'Wolf-427', 'futile-attempt', result.latestSha)
+        const r = await api.update.apply(token, 'Wolf-427', 'futile-attempt', result.latestSha)
         if (r.ok) {
           this._msg(`✓ Updated ${r.filesUpdated} files. Restarting…`, 'ok')
-          setTimeout(() => api.updater.restart(), 1500)
+          setTimeout(() => api.update.restart(), 1500)
         } else {
           this._msg('✗ ' + r.error, 'err')
           document.getElementById('apply-btn').disabled = false
