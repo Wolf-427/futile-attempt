@@ -526,14 +526,14 @@ function setupUpdater() {
         const res = await net.fetch(`https://api.github.com/repos/${owner}/${repo}/compare/${installedSha}...${sha}`, { headers })
         const cmp = await res.json()
         files = (cmp.files || [])
-          .filter(f => f.status !== 'removed' && f.filename.startsWith('src/'))
+          .filter(f => f.status !== 'removed' && (f.filename.startsWith('src/') || f.filename === 'package.json'))
           .map(f => f.filename)
         // If compare returns nothing, fall through to full download
       }
       if (!files.length) {
         const res = await net.fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/${sha}?recursive=1`, { headers })
         const tree = await res.json()
-        files = (tree.tree || []).filter(f => f.type === 'blob' && f.path.startsWith('src/')).map(f => f.path)
+        files = (tree.tree || []).filter(f => f.type === 'blob' && (f.path.startsWith('src/') || f.path === 'package.json')).map(f => f.path)
       }
       for (const file of files) {
         const r = await net.fetch(`https://raw.githubusercontent.com/${owner}/${repo}/${sha}/${file}`, { headers })
