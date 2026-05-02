@@ -324,7 +324,7 @@ function setupFs() {
     return true
   })
   ipcMain.handle('shell:open',   (_, p) => shell.openPath(p))
-  ipcMain.handle('app:version',  ()    => app.getVersion())
+  ipcMain.handle('app:version',  async () => { const s = await readStore(); return s['app-version'] || app.getVersion() })
 }
 
 // ── Dialogs ───────────────────────────────────────────────────────────────────
@@ -543,6 +543,10 @@ function setupUpdater() {
         await fs.writeFile(dest, await r.text(), 'utf8')
       }
       s['installed-sha'] = sha
+      try {
+        const pkg = JSON.parse(await fs.readFile(path.join(appDir, 'package.json'), 'utf8'))
+        if (pkg.version) s['app-version'] = pkg.version
+      } catch {}
       await writeStore(s)
       return { ok: true, filesUpdated: files.length }
     } catch (e) { return { ok: false, error: e.message } }
