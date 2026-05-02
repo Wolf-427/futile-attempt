@@ -22,18 +22,9 @@
   <script src="js/project.js"></script>
   <script src="js/canvas.js"></script>
   <script src="js/settings.js"></script>
+  <script src="js/characters.js"></script>
   <script type="module" src="js/editor.js"></script>
   <script src="js/app.js"></script>
-  <script type="module">
-    // Always start at project overview.
-    Store._data.activeId = null
-    App.init()
-    // Hide loading screen — everything above is synchronous, app is ready.
-    var _ls = document.getElementById('ls')
-    if (_ls) {
-      _ls.classList.add('ls-out')
-      setTimeout(function() { if (_ls.parentNode) _ls.parentNode.removeChild(_ls) }, 500)
-    }
-  </script>
+  <script src="js/init.js" defer></script>
 </body>
 </html>

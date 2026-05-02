@@ -5,7 +5,7 @@ const App = {
     // Ensure the last active project still exists on disk before rendering
     await Store.verifyProject()
 
-    Store.sub(['activeId', 'view', 'sidebar', 'boardFile', 'boardStack', 'docPath', 'theme', 'paperTheme', 'accentName', 'coverBgEnabled', 'editorFont', 'uiFont'], () => {
+    Store.sub(['activeId', 'view', 'sidebar', 'boardFile', 'boardStack', 'docPath', 'activeCharacterId', 'theme', 'paperTheme', 'accentName', 'coverBgEnabled', 'editorFont', 'uiFont'], () => {
       this._applyTheme()
       this.render()
     })
@@ -369,6 +369,7 @@ const App = {
           <div class="nav-group">
             <button class="nav-btn" data-view="editor">Editor</button>
             <button class="nav-btn" data-view="board">Canvas</button>
+            <button class="nav-btn" data-view="characters">Characters</button>
           </div>
           <div class="spacer"></div>
           <button class="titlebar-btn" id="btn-settings" title="Settings">
@@ -408,7 +409,9 @@ const App = {
 
     // Sync dynamic states without re-rendering the layout
     root.querySelectorAll('.nav-btn').forEach(btn => {
-      btn.classList.toggle('active', s.view === btn.dataset.view)
+      const v = btn.dataset.view
+      const isActive = s.view === v || (v === 'characters' && s.view === 'character')
+      btn.classList.toggle('active', isActive)
     })
 
     root.querySelector('#btn-settings')?.classList.toggle('active', s.view === 'settings')
@@ -428,9 +431,12 @@ const App = {
     }
 
     const main = document.getElementById('main-content')
-    if (s.view === 'editor')   this.renderEditor(main, project)
-    if (s.view === 'board')    this.renderBoard(main, project)
-    if (s.view === 'settings') Settings.mount(main, project)
+    if (s.view === 'editor')     this.renderEditor(main, project)
+    if (s.view === 'board')      this.renderBoard(main, project)
+    if (s.view === 'settings')   Settings.mount(main, project)
+    if (s.view === 'character')  this.renderCharacter(main, project)
+    if (s.view === 'characters') this.renderCharactersOverview(main, project)
+    if (s.view === 'trash')      this.renderTrash(main, project)
   },
 
   async renderSidebar(project) {
@@ -441,9 +447,11 @@ const App = {
     container.dataset.projectId = project.id
 
     // 1. Fetch data BEFORE clearing DOM
-    const [docs, boards] = await Promise.all([
+    const [docs, boards, chars, trashItems] = await Promise.all([
       Project.readDocs(project.dir),
-      Project.readBoards(project.dir)
+      Project.readBoards(project.dir),
+      Project.readCharacters(project.dir),
+      Project.readTrash(project.dir)
     ])
 
     // 2. Build everything in memory
@@ -488,7 +496,30 @@ const App = {
     boardsSection.appendChild(subBoardsList)
     fragment.appendChild(boardsSection)
 
+    const charsSection = document.createElement('div'); charsSection.className = 'sidebar-section'
+    const charsHdr = document.createElement('div'); charsHdr.className = 'sidebar-header'
+    const charsLbl = document.createElement('span'); charsLbl.className = 'sidebar-label'; charsLbl.textContent = 'Characters'
+    const addCharBtn = document.createElement('button'); addCharBtn.className = 'sidebar-add'; addCharBtn.textContent = '+'
+    addCharBtn.onclick = () => this._createCharacter(project)
+    charsHdr.appendChild(charsLbl); charsHdr.appendChild(addCharBtn); charsSection.appendChild(charsHdr)
+
+    const charsList = document.createElement('div'); charsList.id = 'sidebar-chars'
+    charsSection.appendChild(charsList)
+    fragment.appendChild(charsSection)
+
     const footer = document.createElement('div'); footer.className = 'sidebar-footer'
+
+    const trashBtn = document.createElement('button')
+    trashBtn.className = 'sidebar-row sidebar-trash-btn' + (s.view === 'trash' ? ' active' : '')
+    trashBtn.id = 'sidebar-trash-btn'
+    const trashCount = trashItems.length
+    trashBtn.innerHTML = `
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.7"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+      <span style="flex:1">Trash</span>
+    `
+    trashBtn.onclick = () => Store.set('view', 'trash')
+    footer.appendChild(trashBtn)
+
     const pathBtn = document.createElement('button'); pathBtn.className = 'sidebar-path'
     pathBtn.innerHTML = `⌂ <span>${project.dir.split('/').pop()}</span>`
     pathBtn.onclick = () => api.shell.open(project.dir)
@@ -499,6 +530,12 @@ const App = {
       const e = document.createElement('span'); e.className = 'sidebar-empty'; e.textContent = 'No documents yet'; docTree.appendChild(e)
     } else {
       this._sortDocs(docs, project.docOrder).forEach(n => this._docNode(n, docTree, s.docPath, project))
+    }
+
+    if (!chars.length) {
+      const e = document.createElement('span'); e.className = 'sidebar-empty'; e.textContent = 'No characters yet'; charsList.appendChild(e)
+    } else {
+      chars.forEach(c => this._charRow(c, charsList, s, project))
     }
 
     boards.filter(b => !b.isMaster).forEach(b => {
@@ -550,7 +587,7 @@ const App = {
           e.preventDefault(); e.stopPropagation()
           this._showSidebarMenu(e.clientX, e.clientY, [
             { label: 'Rename Board', action: () => _startBoardRename(e) },
-            { label: 'Delete Board', danger: true, action: () => this._deleteBoard(project.dir, b.file) }
+            { label: 'Move to Trash', danger: true, action: () => this._deleteBoard(project.dir, b.file, b.name) }
           ])
         })
 
@@ -586,6 +623,15 @@ const App = {
       const active = s.view === 'board' && btn.dataset.file === s.boardFile
       btn.classList.toggle('board-active', active)
     })
+
+    // Update Character selection
+    container.querySelectorAll('.char-sidebar-row').forEach(btn => {
+      btn.classList.toggle('active', s.view === 'character' && btn.dataset.id === s.activeCharacterId)
+    })
+
+    // Update Trash button
+    const trashBtn = container.querySelector('#sidebar-trash-btn')
+    if (trashBtn) trashBtn.classList.toggle('active', s.view === 'trash')
   },
 
   _showNewDocModal(project) {
@@ -763,7 +809,7 @@ const App = {
         e.preventDefault(); e.stopPropagation()
         this._showSidebarMenu(e.clientX, e.clientY, [
           { label: 'Rename', action: () => _startRename(e) },
-          { label: 'Delete Document', danger: true, action: () => this._deleteDoc(node.path) }
+          { label: 'Move to Trash', danger: true, action: () => this._deleteDoc(node.path) }
         ])
       })
 
@@ -811,45 +857,376 @@ const App = {
     setTimeout(() => document.addEventListener('mousedown', close), 10)
   },
 
-  async _deleteDoc(path) {
-    if (!confirm('Are you sure you want to delete this document? This cannot be undone.')) return
-    await api.fs.delete(path)
+  _confirmModal(title, body, confirmLabel = 'Confirm', danger = false) {
+    return new Promise(resolve => {
+      const overlay = document.createElement('div')
+      overlay.className = 'modal-overlay'
+      overlay.innerHTML = `
+        <div class="modal" style="max-width:360px">
+          <div class="modal-header">${title}</div>
+          <div class="modal-body" style="padding:16px 24px;color:var(--tx2);font-size:13.5px;line-height:1.6">${body}</div>
+          <div class="modal-footer">
+            <button class="btn-sm" id="conf-cancel">Cancel</button>
+            <button class="btn-sm ${danger ? 'danger' : 'primary'}" id="conf-ok">${confirmLabel}</button>
+          </div>
+        </div>
+      `
+      document.body.appendChild(overlay)
+      const close = val => { overlay.remove(); resolve(val) }
+      overlay.querySelector('#conf-ok').onclick = () => close(true)
+      overlay.querySelector('#conf-cancel').onclick = () => close(false)
+      overlay.onclick = e => { if (e.target === overlay) close(false) }
+      setTimeout(() => overlay.querySelector('#conf-ok').focus(), 50)
+    })
+  },
 
+  async _deleteDoc(path) {
+    const name = path.split('/').pop().replace(/\.md$/, '')
+    const ok = await this._confirmModal(
+      'Move to Trash?',
+      `<strong>${name}</strong> will be moved to the project trash. You can restore it later.`,
+      'Move to Trash'
+    )
+    if (!ok) return
     const project = Store.project
-    if (project && project.docOrder) {
+    await Project.trashItem(project.dir, { type: 'document', name, originalPath: path })
+    if (project.docOrder) {
       const newOrder = project.docOrder.filter(p => p !== path && !p.startsWith(path + '/'))
-      const projects = Store.get('projects').map(p => 
-        p.id === project.id ? { ...p, docOrder: newOrder } : p
-      )
-      Store._data.projects = projects
+      Store._data.projects = Store.get('projects').map(p => p.id === project.id ? { ...p, docOrder: newOrder } : p)
       Store.save()
     }
-
-    // Invalidate sidebar cache so the next render re-reads from disk
     const _sc = document.getElementById('sidebar-container')
     if (_sc) _sc.dataset.projectId = ''
+    if (Store.get('docPath') === path) { Store.set('docPath', null) } else { this.render() }
+  },
 
-    if (Store.get('docPath') === path) {
-      Store.set('docPath', null)
+  async _deleteBoard(projectDir, file, name) {
+    if (file === 'master.json') return alert('The Master board cannot be deleted.')
+    const ok = await this._confirmModal(
+      'Move to Trash?',
+      `<strong>${name}</strong> will be moved to the project trash. You can restore it later.`,
+      'Move to Trash'
+    )
+    if (!ok) return
+    await Project.trashItem(projectDir, { type: 'board', name, originalPath: `${projectDir}/boards/${file}` })
+    const sc = document.getElementById('sidebar-container')
+    if (sc) sc.dataset.projectId = ''
+    if (Store.get('boardFile') === file) {
+      Store._data.boardFile = 'master.json'; Store._data.boardStack = []; Store.save()
+    }
+    this.render()
+  },
+
+  _charRow(char, container, s, project) {
+    const btn = document.createElement('button')
+    btn.className = 'sidebar-row char-sidebar-row' + (s.view === 'character' && s.activeCharacterId === char.id ? ' active' : '')
+    btn.dataset.id = char.id
+
+    const dot = document.createElement('span')
+    dot.className = 'char-sidebar-dot'
+    dot.style.background = Characters.roleColor(char.role)
+    btn.appendChild(dot)
+
+    const lbl = document.createElement('span')
+    lbl.className = 'char-sidebar-name'
+    lbl.textContent = char.name || 'Unnamed'
+    lbl.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+    btn.appendChild(lbl)
+
+    btn.onclick = () => {
+      Store.set('activeCharacterId', char.id)
+      Store.set('view', 'character')
+    }
+
+    const _startRename = (ev) => {
+      if (ev) { ev.stopPropagation(); ev.preventDefault() }
+      const inp = document.createElement('input')
+      inp.value = char.name || ''
+      inp.className = 'sidebar-new-input'
+      inp.style.margin = '0'
+      lbl.replaceWith(inp)
+      inp.focus(); inp.select()
+
+      const commit = async () => {
+        const newName = inp.value.trim()
+        if (newName && newName !== char.name) {
+          char.name = newName
+          await Project.saveCharacter(project.dir, char)
+          const sc = document.getElementById('sidebar-container')
+          if (sc) sc.dataset.projectId = ''
+          this.render()
+          return
+        }
+        if (inp.parentNode) inp.replaceWith(lbl)
+      }
+      inp.onblur = commit
+      inp.onkeydown = (e) => { if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') inp.replaceWith(lbl) }
+      inp.onmousedown = (e) => e.stopPropagation()
+    }
+
+    lbl.addEventListener('dblclick', (e) => { e.stopPropagation(); _startRename(e) })
+
+    btn.addEventListener('contextmenu', e => {
+      e.preventDefault(); e.stopPropagation()
+      this._showSidebarMenu(e.clientX, e.clientY, [
+        { label: 'Rename', action: () => _startRename(e) },
+        { label: 'Move to Trash', danger: true, action: () => this._deleteCharacter(project.dir, char.id, char.name) }
+      ])
+    })
+
+    container.appendChild(btn)
+  },
+
+  async _createCharacter(project) {
+    const char = {
+      id: crypto.randomUUID(),
+      name: 'New Character',
+      role: 'supporting',
+      description: '',
+      notes: '',
+      imageFile: null,
+      created: Date.now(),
+      updated: Date.now(),
+    }
+    await Project.saveCharacter(project.dir, char)
+    const sc = document.getElementById('sidebar-container')
+    if (sc) sc.dataset.projectId = ''
+    const mc = document.getElementById('main-content')
+    if (mc) mc.dataset.view = ''
+    Store._data.activeCharacterId = char.id
+    Store.save()
+    Store.set('view', 'character')
+  },
+
+  async _deleteCharacter(projectDir, id, name) {
+    const ok = await this._confirmModal(
+      'Move to Trash?',
+      `<strong>${name || 'This character'}</strong> will be moved to the project trash. You can restore it later.`,
+      'Move to Trash'
+    )
+    if (!ok) return
+    await Project.trashItem(projectDir, { type: 'character', name: name || 'Unnamed', originalPath: `${projectDir}/characters/${id}.json` })
+    const sc = document.getElementById('sidebar-container')
+    if (sc) sc.dataset.projectId = ''
+    const mc = document.getElementById('main-content')
+    if (mc) { mc.dataset.view = ''; mc.dataset.charId = '' }
+    if (Store.get('activeCharacterId') === id) {
+      Store._data.activeCharacterId = null; Store.save(); Store.set('view', 'characters')
     } else {
       this.render()
     }
   },
 
-  async _deleteBoard(projectDir, file) {
-    if (file === 'master.json') return alert('The Master board cannot be deleted.')
-    if (!confirm('Delete this board? All nodes and arrows on this specific board will be lost.')) return
-    await api.fs.delete(`${projectDir}/boards/${file}`)
+  renderCharacter(container, project) {
+    const charId = Store.get('activeCharacterId')
+    if (container.dataset.charId === charId && container.querySelector('.char-panel')) return
+    container.innerHTML = ''
+    container.dataset.charId = charId || ''
+    container.dataset.view = 'character'
+    Characters.mount(container, project, charId)
+  },
+
+  async renderCharactersOverview(container, project) {
+    if (container.dataset.view === 'characters-overview') return
+    container.dataset.view = 'characters-overview'
+    container.innerHTML = '<div class="char-overview-loading"></div>'
+
+    const chars = await Project.readCharacters(project.dir)
+
+    const wrap = document.createElement('div')
+    wrap.className = 'char-overview char-enter'
+
+    const header = document.createElement('div')
+    header.className = 'char-overview-header'
+    header.innerHTML = `
+      <h2 class="char-overview-title">Characters<span class="char-overview-count">${chars.length}</span></h2>
+      <button class="btn-sm primary" id="char-overview-new">+ New Character</button>
+    `
+    wrap.appendChild(header)
+
+    if (!chars.length) {
+      const empty = document.createElement('div')
+      empty.className = 'char-overview-empty'
+      empty.innerHTML = `
+        <div class="char-overview-empty-icon">◎</div>
+        <div>No characters yet.</div>
+        <div style="color:var(--tx3);font-size:13px;margin-top:6px">Click "+ New Character" to get started.</div>
+      `
+      wrap.appendChild(empty)
+    } else {
+      const grid = document.createElement('div')
+      grid.className = 'char-overview-grid'
+
+      chars.forEach(char => {
+        const imgSrc = char.imageFile
+          ? `file://${project.dir}/characters/images/${char.imageFile}`
+          : null
+        const roleColor = Characters.roleColor(char.role)
+        const roleLabel = Characters.roleLabel(char.role)
+        const initial = (char.name || '?')[0].toUpperCase()
+
+        const card = document.createElement('div')
+        card.className = 'char-card'
+        card.dataset.id = char.id
+        card.innerHTML = `
+          <div class="char-card-img">
+            ${imgSrc
+              ? `<img src="${imgSrc}" draggable="false"/>`
+              : `<div class="char-card-placeholder"><span>${initial}</span></div>`
+            }
+          </div>
+          <div class="char-card-body">
+            <div class="char-card-name">${this._escHtml(char.name || 'Unnamed')}</div>
+            <div class="char-card-role" style="color:${roleColor}">${roleLabel}</div>
+          </div>
+        `
+        card.addEventListener('click', () => {
+          Store._data.activeCharacterId = char.id
+          Store.save()
+          Store.set('view', 'character')
+        })
+        card.addEventListener('contextmenu', e => {
+          e.preventDefault(); e.stopPropagation()
+          this._showSidebarMenu(e.clientX, e.clientY, [
+            { label: 'Open', action: () => {
+              Store._data.activeCharacterId = char.id
+              Store.save()
+              Store.set('view', 'character')
+            }},
+            { label: 'Move to Trash', danger: true, action: () => {
+              container.dataset.view = ''
+              this._deleteCharacter(project.dir, char.id, char.name)
+            }}
+          ])
+        })
+        grid.appendChild(card)
+      })
+      wrap.appendChild(grid)
+    }
+
+    container.innerHTML = ''
+    container.appendChild(wrap)
+
+    container.querySelector('#char-overview-new')?.addEventListener('click', async () => {
+      await this._createCharacter(project)
+      // After creating, open detail — but also invalidate overview cache for next visit
+      container.dataset.view = ''
+    })
+  },
+
+  _escHtml(str) {
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  },
+
+  async renderTrash(container, project) {
+    container.innerHTML = ''
+    container.dataset.view = 'trash'
+
+    const items = await Project.readTrash(project.dir)
+    const sorted = [...items].sort((a, b) => b.trashedAt - a.trashedAt)
+
+    const TYPE_ICON = { document: '📄', board: '⊞', character: '◎' }
+    const TYPE_LABEL = { document: 'Document', board: 'Canvas board', character: 'Character' }
+
+    const wrap = document.createElement('div')
+    wrap.className = 'trash-view char-enter'
+
+    const header = document.createElement('div')
+    header.className = 'trash-header'
+    header.innerHTML = `
+      <h2 class="trash-title">Trash<span class="trash-count">${items.length}</span></h2>
+      ${items.length ? `<button class="btn-sm danger" id="trash-empty-btn">Empty Trash</button>` : ''}
+    `
+    wrap.appendChild(header)
+
+    if (!sorted.length) {
+      wrap.innerHTML += `<div class="trash-empty-state">Trash is empty</div>`
+    } else {
+      const list = document.createElement('div')
+      list.className = 'trash-list'
+      sorted.forEach(item => {
+        const age = this._trashAge(item.trashedAt)
+        const row = document.createElement('div')
+        row.className = 'trash-row'
+        row.dataset.id = item.id
+        row.innerHTML = `
+          <span class="trash-icon">${TYPE_ICON[item.type] || '📄'}</span>
+          <div class="trash-info">
+            <span class="trash-name">${this._escHtml(item.name)}</span>
+            <span class="trash-meta">${TYPE_LABEL[item.type] || item.type} · ${age}</span>
+          </div>
+          <div class="trash-actions">
+            <button class="btn-sm trash-restore" data-id="${item.id}">Restore</button>
+            <button class="btn-sm danger trash-delete" data-id="${item.id}">Delete permanently</button>
+          </div>
+        `
+        list.appendChild(row)
+      })
+      wrap.appendChild(list)
+    }
+
+    container.appendChild(wrap)
+
+    container.querySelector('#trash-empty-btn')?.addEventListener('click', async () => {
+      const ok = await this._confirmModal(
+        'Empty Trash?',
+        'All items will be permanently deleted. This cannot be undone.',
+        'Empty Trash', true
+      )
+      if (!ok) return
+      await Project.emptyTrash(project.dir)
+      this._invalidateSidebar()
+      this.renderTrash(container, project)
+    })
+
+    container.querySelectorAll('.trash-restore').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const entry = await Project.restoreItem(project.dir, btn.dataset.id)
+        if (!entry) return
+        if (entry.type === 'board') {
+          const file = entry.originalPath.split('/').pop()
+          Store._data.boardFile = file; Store._data.boardStack = []; Store.save()
+        } else if (entry.type === 'document') {
+          Store._data.docPath = entry.originalPath; Store.save()
+        } else if (entry.type === 'character') {
+          const charId = entry.originalPath.split('/').pop().replace(/\.json$/, '')
+          Store._data.activeCharacterId = charId; Store.save()
+        }
+        this._invalidateSidebar()
+        this.renderTrash(container, project)
+      })
+    })
+
+    container.querySelectorAll('.trash-delete').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const item = sorted.find(i => i.id === btn.dataset.id)
+        const ok = await this._confirmModal(
+          'Delete permanently?',
+          `<strong>${this._escHtml(item?.name || 'This item')}</strong> will be gone forever. This cannot be undone.`,
+          'Delete permanently', true
+        )
+        if (!ok) return
+        await Project.permanentDelete(project.dir, btn.dataset.id)
+        this._invalidateSidebar()
+        this.renderTrash(container, project)
+      })
+    })
+  },
+
+  _invalidateSidebar() {
     const sc = document.getElementById('sidebar-container')
     if (sc) sc.dataset.projectId = ''
-    if (Store.get('boardFile') === file) {
-      Store._data.boardFile = 'master.json'
-      Store._data.boardStack = []
-      Store.save()
-      this.render()
-    } else {
-      this.render()
-    }
+  },
+
+  _trashAge(ts) {
+    const diff = Date.now() - ts
+    const mins = Math.floor(diff / 60000)
+    if (mins < 1) return 'just now'
+    if (mins < 60) return `${mins}m ago`
+    const hrs = Math.floor(mins / 60)
+    if (hrs < 24) return `${hrs}h ago`
+    const days = Math.floor(hrs / 24)
+    return `${days}d ago`
   },
 
   _sortDocs(docs, order) {

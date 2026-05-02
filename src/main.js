@@ -17,7 +17,7 @@ const DICT_PACKAGES = {
   'es-ES': 'dictionary-es',
 }
 const dictCache = new Map()  // lang → nspell instance
-let spellReady = null        // Promise<nspell>
+let spellReady = Promise.resolve(null)  // Promise<nspell>
 
 // Tries to load a .aff/.dic pair from {userData}/dictionaries/{lang}.{ext}
 // before falling back to the bundled npm package.

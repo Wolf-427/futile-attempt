@@ -209,7 +209,7 @@ export const Editor = {
       spellGroup.push({
         icon: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
         label: `Add "${word}" to Dictionary`,
-        action: () => api.spellcheck.addWord(word)
+        action: () => { api.spellcheck.addWord(word).then(() => this.core._spellcheckExt?.forceRecheck?.()) }
       })
       if (spellGroup.length) groups.push(spellGroup)
     }
@@ -393,14 +393,64 @@ export const Editor = {
       btn('⇤',  () => t.core?.instance?.chain().focus().liftListItem('listItem').run(),    null, 'Outdent'),
     ].forEach(b=>tb.appendChild(b)); tb.appendChild(sep())
 
-    // Spellcheck Language
-    const langSel = document.createElement('select')
-    langSel.className='editor-page-sel'; langSel.title='Spellcheck language'; langSel.style.width='90px'
-    this.SPELLCHECK_LANGS.forEach(l => { const o=document.createElement('option'); o.value=l.value; o.textContent=l.label; langSel.appendChild(o) })
-    api.store.get('spellcheck-languages').then(v => { if(v && v.length) { langSel.value = v[0]; t._applyLanguage(v[0], false) } }).catch(()=>{})
-    langSel.addEventListener('change', () => {
-      t._applyLanguage(langSel.value).catch(console.error)
+    // Spellcheck Language — custom dropdown (native <select> is unreliable in Electron)
+    document.querySelector('.spell-lang-dropdown')?.remove()
+
+    const langBtn = document.createElement('button')
+    langBtn.id = 'spell-lang-btn'
+    langBtn.className = 'editor-page-sel text-fmt-btn'
+    langBtn.style.cssText = 'width:76px;justify-content:space-between;gap:4px;font-size:11px;padding:3px 6px;'
+    langBtn.title = 'Spellcheck language'
+
+    const langDropdown = document.createElement('div')
+    langDropdown.className = 'spell-lang-dropdown ctx-menu hidden'
+    document.body.appendChild(langDropdown)
+
+    let _activeLang = 'en-US'
+    const updateLangBtn = (lang) => {
+      _activeLang = lang
+      langBtn.innerHTML = `<span>${lang}</span><svg width="8" height="5" viewBox="0 0 8 5" fill="currentColor" style="flex-shrink:0;opacity:.6"><path d="M0 0l4 5 4-5z"/></svg>`
+    }
+    updateLangBtn('en-US')
+
+    this.SPELLCHECK_LANGS.forEach(l => {
+      const item = document.createElement('button')
+      item.className = 'ctx-item'
+      item.dataset.lang = l.value
+      item.textContent = l.label
+      item.addEventListener('mousedown', e => {
+        e.preventDefault()
+        langDropdown.classList.add('hidden')
+        updateLangBtn(l.value)
+        t._applyLanguage(l.value).catch(console.error)
+      })
+      langDropdown.appendChild(item)
     })
+
+    langBtn.addEventListener('mousedown', e => {
+      e.preventDefault()
+      e.stopPropagation()
+      const isHidden = langDropdown.classList.toggle('hidden')
+      if (!isHidden) {
+        const r = langBtn.getBoundingClientRect()
+        langDropdown.style.top  = (r.bottom + 2) + 'px'
+        langDropdown.style.left = r.left + 'px'
+        langDropdown.style.minWidth = '160px'
+        // Highlight current
+        langDropdown.querySelectorAll('.ctx-item').forEach(b => b.classList.toggle('active', b.dataset.lang === _activeLang))
+        const close = (ev) => {
+          if (!langDropdown.contains(ev.target) && ev.target !== langBtn) {
+            langDropdown.classList.add('hidden')
+            document.removeEventListener('mousedown', close)
+          }
+        }
+        setTimeout(() => document.addEventListener('mousedown', close), 10)
+      }
+    })
+
+    api.store.get('spellcheck-languages').then(v => {
+      if (v && v.length) { updateLangBtn(v[0]); t._applyLanguage(v[0], false) }
+    }).catch(() => {})
     const dictBtn = btn(
       '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>',
       () => api.spellcheck.openDictionaryFolder(),
@@ -413,10 +463,8 @@ export const Editor = {
       'Toggle spellcheck'
     )
     t._spellEnabled = true
-    api.store.get('spellcheck-enabled').then(v => {
-      if (v === false) t._applySpellcheckEnabled(false, false)
-    }).catch(() => {})
-    tb.appendChild(langSel); tb.appendChild(dictBtn); tb.appendChild(spellToggleBtn); tb.appendChild(sep())
+    api.store.del('spellcheck-enabled').catch(() => {})
+    tb.appendChild(langBtn); tb.appendChild(dictBtn); tb.appendChild(spellToggleBtn); tb.appendChild(sep())
 
     // Page size
     const pgSel = document.createElement('select')
@@ -472,12 +520,11 @@ export const Editor = {
     if (this.core) await this.core.setLanguage(lang);
   },
 
-  async _applySpellcheckEnabled(enabled, persist = true) {
+  _applySpellcheckEnabled(enabled) {
     this._spellEnabled = enabled
-    if (persist) await api.store.set('spellcheck-enabled', enabled).catch(() => {})
     this.core?.setSpellcheckEnabled(enabled)
-    const langSel = document.querySelector('.editor-toolbar select[title="Spellcheck language"]')
-    if (langSel) langSel.disabled = !enabled
+    const langBtn = document.getElementById('spell-lang-btn')
+    if (langBtn) langBtn.disabled = !enabled
     this._syncToolbar()
   },
 

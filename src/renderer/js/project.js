@@ -3,7 +3,7 @@ const Project = {
     const slug = name.trim().replace(/[^a-zA-Z0-9 _-]/g, '').replace(/\s+/g, '-').toLowerCase()
     const dir = `${parent}/${slug}`
     await api.fs.mkdir(dir)
-    for (const d of ['documents', 'references', 'boards', 'exports']) await api.fs.mkdir(`${dir}/${d}`)
+    for (const d of ['documents', 'references', 'boards', 'exports', 'characters', 'characters/images']) await api.fs.mkdir(`${dir}/${d}`)
     const id = crypto.randomUUID()
     const manifest = { id, name: name.trim(), created: Date.now() }
     await api.fs.write(`${dir}/scriptum.json`, JSON.stringify(manifest, null, 2))
@@ -63,5 +63,111 @@ const Project = {
     const data = { name, isMaster: false, nodes: [], updated: Date.now() }
     await this.saveBoard(dir, file, data)
     return { file, ...data }
+  },
+
+  async readCharacters(dir) {
+    const out = []
+    const charDir = `${dir}/characters`
+    if (!await api.fs.exists(charDir)) return out
+    const entries = await api.fs.readdir(charDir)
+    for (const e of entries) {
+      if (!e.name.endsWith('.json')) continue
+      try { out.push(JSON.parse(await api.fs.read(e.path))) } catch {}
+    }
+    return out.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+  },
+
+  async saveCharacter(dir, char) {
+    await api.fs.mkdir(`${dir}/characters`)
+    await api.fs.write(`${dir}/characters/${char.id}.json`, JSON.stringify({ ...char, updated: Date.now() }, null, 2))
+  },
+
+  async deleteCharacter(dir, id) {
+    const charFile = `${dir}/characters/${id}.json`
+    if (await api.fs.exists(charFile)) await api.fs.delete(charFile)
+    const imgDir = `${dir}/characters/images`
+    if (await api.fs.exists(imgDir)) {
+      const entries = await api.fs.readdir(imgDir)
+      for (const e of entries) {
+        if (e.name.startsWith(id + '.')) await api.fs.delete(e.path)
+      }
+    }
+  },
+
+  // ── Trash ─────────────────────────────────────────────────────────────────────
+
+  async readTrash(dir) {
+    try {
+      const p = `${dir}/trash/manifest.json`
+      if (!await api.fs.exists(p)) return []
+      return JSON.parse(await api.fs.read(p))
+    } catch { return [] }
+  },
+
+  async _writeTrashManifest(dir, items) {
+    await api.fs.mkdir(`${dir}/trash`)
+    await api.fs.write(`${dir}/trash/manifest.json`, JSON.stringify(items, null, 2))
+  },
+
+  async trashItem(dir, { type, name, originalPath }) {
+    const items = await this.readTrash(dir)
+    const id = crypto.randomUUID()
+    const filename = originalPath.split('/').pop()
+    const subdir = type === 'document' ? 'documents' : type === 'board' ? 'boards' : 'characters'
+    await api.fs.mkdir(`${dir}/trash/${subdir}`)
+    const trashPath = `${dir}/trash/${subdir}/${id}_${filename}`
+    await api.fs.rename(originalPath, trashPath)
+    const entry = { id, type, name, originalPath, trashPath, trashedAt: Date.now() }
+    await this._writeTrashManifest(dir, [...items, entry])
+    return entry
+  },
+
+  async restoreItem(dir, trashId) {
+    const items = await this.readTrash(dir)
+    const entry = items.find(i => i.id === trashId)
+    if (!entry) return null
+    const parentDir = entry.originalPath.substring(0, entry.originalPath.lastIndexOf('/'))
+    await api.fs.mkdir(parentDir)
+    await api.fs.rename(entry.trashPath, entry.originalPath)
+    await this._writeTrashManifest(dir, items.filter(i => i.id !== trashId))
+    return entry
+  },
+
+  async permanentDelete(dir, trashId) {
+    const items = await this.readTrash(dir)
+    const entry = items.find(i => i.id === trashId)
+    if (!entry) return
+    try { await api.fs.delete(entry.trashPath) } catch {}
+    if (entry.type === 'character') {
+      const charId = entry.originalPath.split('/').pop().replace(/\.json$/, '')
+      try { await api.fs.delete(`${dir}/characters/${charId}.md`) } catch {}
+      const imgDir = `${dir}/characters/images`
+      if (await api.fs.exists(imgDir)) {
+        const entries = await api.fs.readdir(imgDir)
+        for (const e of entries) {
+          if (e.name.startsWith(charId)) try { await api.fs.delete(e.path) } catch {}
+        }
+      }
+    }
+    await this._writeTrashManifest(dir, items.filter(i => i.id !== trashId))
+  },
+
+  async emptyTrash(dir) {
+    const items = await this.readTrash(dir)
+    for (const entry of items) {
+      try { await api.fs.delete(entry.trashPath) } catch {}
+      if (entry.type === 'character') {
+        const charId = entry.originalPath.split('/').pop().replace(/\.json$/, '')
+        try { await api.fs.delete(`${dir}/characters/${charId}.md`) } catch {}
+        const imgDir = `${dir}/characters/images`
+        if (await api.fs.exists(imgDir)) {
+          const entries = await api.fs.readdir(imgDir)
+          for (const e of entries) {
+            if (e.name.startsWith(charId)) try { await api.fs.delete(e.path) } catch {}
+          }
+        }
+      }
+    }
+    await this._writeTrashManifest(dir, [])
   }
 }

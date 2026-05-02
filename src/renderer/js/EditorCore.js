@@ -43,7 +43,7 @@ export class EditorCore {
     });
 
     const extensions = [
-      StarterKit,
+      StarterKit.configure({ underline: false }),
       Placeholder.configure({ placeholder: 'Start writing...' }),
       Underline,
       TextAlign.configure({ types: ['heading', 'paragraph'] }),

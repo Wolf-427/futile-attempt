@@ -7,6 +7,7 @@ const Store = {
     visibleMargins: false,
     showFormattingChars: false,
     editorFont: null, uiFont: null,
+    activeCharacterId: null,
     git: { dirty: false, branch: 'main', syncing: false, error: null }
   },
   _listeners: [],
@@ -66,6 +67,7 @@ const Store = {
         if (d.showFormattingChars !== undefined) this._data.showFormattingChars = d.showFormattingChars
         if (d.editorFont) this._data.editorFont = d.editorFont
         if (d.uiFont) this._data.uiFont = d.uiFont
+        if (d.activeCharacterId !== undefined) this._data.activeCharacterId = d.activeCharacterId
       }
     } catch(e) { console.error('Store loadSync error:', e) }
   },
@@ -106,6 +108,7 @@ const Store = {
           showFormattingChars: this._data.showFormattingChars,
           editorFont: this._data.editorFont,
           uiFont: this._data.uiFont,
+          activeCharacterId: this._data.activeCharacterId,
         }))
       } catch(e) { console.error('Store save error:', e) }
     }, 100)
