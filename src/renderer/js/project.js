@@ -26,7 +26,7 @@ const Project = {
     const entries = await api.fs.readdir(dir)
     const out = []
     for (const e of entries) {
-      if (e.name.startsWith('.')) continue
+      if (e.name.startsWith('.') || e.name === 'backups') continue
       if (e.isDir) out.push({ type: 'folder', name: e.name, path: e.path, children: await this._tree(e.path) })
       else if (e.name.endsWith('.md')) out.push({ type: 'file', name: e.name.replace(/\.md$/, ''), path: e.path })
     }

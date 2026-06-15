@@ -42,6 +42,71 @@ export class EditorCore {
       }
     });
 
+    const INDENT_SIZE = 24; // px per indent level
+
+    const IndentExtension = Extension.create({
+      name: 'indent',
+      addGlobalAttributes() {
+        return [{
+          types: ['paragraph', 'heading'],
+          attributes: {
+            indent: {
+              default: 0,
+              parseHTML: el => {
+                const pl = parseFloat(el.style?.paddingLeft) || 0;
+                return pl ? Math.round(pl / INDENT_SIZE) : 0;
+              },
+              renderHTML: attrs => attrs.indent > 0 ? { style: `padding-left:${attrs.indent * INDENT_SIZE}px` } : {}
+            }
+          }
+        }];
+      },
+      addCommands() {
+        return {
+          indent: () => ({ tr, state, dispatch }) => {
+            const { from, to } = state.selection;
+            let changed = false;
+            state.doc.nodesBetween(from, to, (node, pos) => {
+              if (!['paragraph', 'heading'].includes(node.type.name)) return;
+              const cur = node.attrs.indent || 0;
+              if (cur < 8) { tr.setNodeMarkup(pos, null, { ...node.attrs, indent: cur + 1 }); changed = true; }
+            });
+            if (changed && dispatch) { dispatch(tr); return true; }
+            return false;
+          },
+          outdent: () => ({ tr, state, dispatch }) => {
+            const { from, to } = state.selection;
+            let changed = false;
+            state.doc.nodesBetween(from, to, (node, pos) => {
+              if (!['paragraph', 'heading'].includes(node.type.name)) return;
+              const cur = node.attrs.indent || 0;
+              if (cur > 0) { tr.setNodeMarkup(pos, null, { ...node.attrs, indent: cur - 1 }); changed = true; }
+            });
+            if (changed && dispatch) { dispatch(tr); return true; }
+            return false;
+          }
+        };
+      },
+      addKeyboardShortcuts() {
+        return {
+          // In a list: indent the list item. Otherwise: insert a tab-width of
+          // non-breaking spaces at the cursor (text-editor behaviour).
+          Tab: () => {
+            if (this.editor.can().sinkListItem('listItem')) {
+              return this.editor.chain().sinkListItem('listItem').run();
+            }
+            return this.editor.chain().indent().run();
+          },
+          'Shift-Tab': () => {
+            if (this.editor.can().liftListItem('listItem')) {
+              return this.editor.chain().liftListItem('listItem').run();
+            }
+            return this.editor.chain().outdent().run();
+          }
+        };
+      }
+    });
+
     const extensions = [
       StarterKit.configure({ underline: false }),
       Placeholder.configure({ placeholder: 'Start writing...' }),
@@ -49,6 +114,7 @@ export class EditorCore {
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       this.paginationExtension,
       FontSizeMark,
+      IndentExtension,
     ];
 
     if (this.spellcheckApi) {

@@ -102,6 +102,7 @@ const Settings = {
     const theme = Store.get('theme')
     const paperTheme = Store.get('paperTheme')
     const coverBgEnabled = Store.get('coverBgEnabled')
+    const backupInterval = Store.get('backupInterval') ?? 5
     const accentColors = this.accentColors
     const currentHex = (accentColors.find(c => c.name === Store.get('accentName')) ?? accentColors[0]).hex
 
@@ -148,6 +149,23 @@ const Settings = {
               <input type="checkbox" id="setting-cover-bg" ${coverBgEnabled ? 'checked' : ''}/>
               <span class="toggle-track"></span>
             </label>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <div class="settings-title">Backups</div>
+          <div class="settings-row">
+            <div style="flex:1">
+              <div class="settings-note" style="margin:0">Timed backup interval</div>
+              <div style="font-size:10px;color:var(--tx3)">Keeps 5 timed + 3 switch backups per document in .backups/</div>
+            </div>
+            <select class="settings-input" id="setting-backup-interval" style="max-width:120px">
+              <option value="0"  ${backupInterval===0?'selected':''}>Off</option>
+              <option value="5"  ${backupInterval===5?'selected':''}>5 min</option>
+              <option value="10" ${backupInterval===10?'selected':''}>10 min</option>
+              <option value="15" ${backupInterval===15?'selected':''}>15 min</option>
+              <option value="30" ${backupInterval===30?'selected':''}>30 min</option>
+            </select>
           </div>
         </div>
 
@@ -207,6 +225,9 @@ const Settings = {
     })
     document.getElementById('setting-cover-bg')?.addEventListener('change', (e) => {
       Store.set('coverBgEnabled', e.target.checked)
+    })
+    document.getElementById('setting-backup-interval')?.addEventListener('change', (e) => {
+      Store.set('backupInterval', Number(e.target.value))
     })
 
     document.getElementById('check-update').addEventListener('click', async () => {

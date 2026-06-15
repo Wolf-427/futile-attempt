@@ -123,7 +123,7 @@ const App = {
 
           <div class="splash-main">
             <div id="splash-settings-panel" class="${isSettings ? '' : 'hidden'}"></div>
-            <div id="splash-home" style="display:${isSettings ? 'none' : 'flex'};flex-direction:column;flex:1;overflow:hidden">
+            <div id="splash-home" style="display:${isSettings ? 'none' : 'flex'};flex-direction:column">
               <div class="splash-welcome" id="splash-welcome"></div>
               <div class="splash-main-header">
                 <div class="splash-main-title">Recent projects</div>

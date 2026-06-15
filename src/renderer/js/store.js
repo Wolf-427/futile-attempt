@@ -8,6 +8,7 @@ const Store = {
     showFormattingChars: false,
     editorFont: null, uiFont: null,
     activeCharacterId: null,
+    backupInterval: 5,
     git: { dirty: false, branch: 'main', syncing: false, error: null }
   },
   _listeners: [],
@@ -68,6 +69,7 @@ const Store = {
         if (d.editorFont) this._data.editorFont = d.editorFont
         if (d.uiFont) this._data.uiFont = d.uiFont
         if (d.activeCharacterId !== undefined) this._data.activeCharacterId = d.activeCharacterId
+        if (d.backupInterval !== undefined) this._data.backupInterval = d.backupInterval
       }
     } catch(e) { console.error('Store loadSync error:', e) }
   },
@@ -109,6 +111,7 @@ const Store = {
           editorFont: this._data.editorFont,
           uiFont: this._data.uiFont,
           activeCharacterId: this._data.activeCharacterId,
+          backupInterval: this._data.backupInterval,
         }))
       } catch(e) { console.error('Store save error:', e) }
     }, 100)

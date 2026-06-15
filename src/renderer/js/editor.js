@@ -5,6 +5,8 @@ export const Editor = {
   _docPath:  null,
   _saveTimer: null,
   _paginateTimer: null,
+  _backupTimer: null,
+  _backupDirty: false,
   core:      null,
   paginator: null,
 
@@ -31,6 +33,19 @@ export const Editor = {
   },
 
   async mount(container) {
+    // Flush any unsaved content from the previous mount before replacing this.core.
+    // loadDoc() calls _save() at the start, but by then this.core is the new empty instance —
+    // capturing here (with the old core) is the only safe moment.
+    clearTimeout(this._saveTimer)
+    clearInterval(this._backupTimer)
+    this._saveTimer = null
+    this._backupTimer = null
+    if (this._docPath && this.core) {
+      try { api.fs.write(this._docPath, this._html2md(this._getCleanHTML())).catch(() => {}) } catch {}
+    }
+    this._docPath = null
+    this._backupDirty = false
+
     // Expose a promise that loadDoc() can await — prevents it running before this.core exists
     let _resolveMountReady
     this._mountReady = new Promise(r => { _resolveMountReady = r })
@@ -80,6 +95,7 @@ export const Editor = {
       await this._applyPageSize();
       this._updateUI();
     });
+    Store.sub(['backupInterval'], () => this._startBackupInterval());
 
     _resolveMountReady()
   },
@@ -389,8 +405,16 @@ export const Editor = {
     ;[
       btn('•—', () => t.core?.instance?.chain().focus().toggleBulletList().run(),          () => isActive('bulletList'),  'Bullet list'),
       btn('1—', () => t.core?.instance?.chain().focus().toggleOrderedList().run(),         () => isActive('orderedList'), 'Numbered list'),
-      btn('⇥',  () => t.core?.instance?.chain().focus().sinkListItem('listItem').run(),    null, 'Indent'),
-      btn('⇤',  () => t.core?.instance?.chain().focus().liftListItem('listItem').run(),    null, 'Outdent'),
+      btn('⇥', () => {
+        const ed = t.core?.instance; if (!ed) return;
+        if (ed.can().sinkListItem('listItem')) ed.chain().focus().sinkListItem('listItem').run();
+        else ed.chain().focus().indent().run();
+      }, null, 'Indent'),
+      btn('⇤', () => {
+        const ed = t.core?.instance; if (!ed) return;
+        if (ed.can().liftListItem('listItem')) ed.chain().focus().liftListItem('listItem').run();
+        else ed.chain().focus().outdent().run();
+      }, null, 'Outdent'),
     ].forEach(b=>tb.appendChild(b)); tb.appendChild(sep())
 
     // Spellcheck Language — custom dropdown (native <select> is unreliable in Electron)
@@ -648,6 +672,7 @@ export const Editor = {
 
     clearTimeout(this._saveTimer);
     this._saveTimer = setTimeout(() => this._save(), 1000);
+    this._backupDirty = true;
     Store.patch('git', { dirty: true });
   },
 
@@ -655,12 +680,23 @@ export const Editor = {
     // Wait for mount() to finish — renderEditor doesn't await mount(), so core may not exist yet
     if (this._mountReady) await this._mountReady
 
+    // Take a switch backup if the document was modified since the last backup
+    if (this._backupDirty) await this._backupDoc('switch')
+
+    // Flush any pending save for the current document before switching paths.
+    // setContent(html, false) suppresses onUpdate, so the old save timer would
+    // otherwise fire after _docPath has already changed, overwriting the new doc.
+    clearTimeout(this._saveTimer)
+    await this._save()
+    this._backupDirty = false
+
     const scroll = document.querySelector('.editor-scroll')
     const isFresh = this._freshMount
     this._freshMount = false
     if (!isFresh && scroll) scroll.classList.add('doc-fade')
 
     this._docPath = path
+    this._startBackupInterval()
     const [html] = await Promise.all([
       api.fs.read(path).then(c => this._md2html(c)).catch(() => '<p></p>'),
       isFresh ? Promise.resolve() : new Promise(r => setTimeout(r, 150)),
@@ -700,6 +736,44 @@ export const Editor = {
   async _save() {
     if (!this._docPath) return
     try { await api.fs.write(this._docPath, this._html2md(this._getCleanHTML())) } catch {}
+  },
+
+  _startBackupInterval() {
+    clearInterval(this._backupTimer)
+    this._backupTimer = null
+    const minutes = Store.get('backupInterval') || 0
+    if (!minutes) return
+    this._backupTimer = setInterval(async () => {
+      if (!this._backupDirty) return
+      await this._backupDoc('timed')
+      this._backupDirty = false
+    }, minutes * 60 * 1000)
+  },
+
+  async _backupDoc(type) {
+    if (!this._docPath) return
+    const lastSlash = this._docPath.lastIndexOf('/')
+    const dir  = this._docPath.substring(0, lastSlash)
+    const base = this._docPath.substring(lastSlash + 1).replace(/\.md$/, '')
+    const backupDir = `${dir}/backups`
+    const maxSlots  = type === 'timed' ? 5 : 3
+
+    const now = new Date()
+    const pad = n => String(n).padStart(2, '0')
+    const ts  = `${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}T${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+
+    try {
+      await api.fs.mkdir(backupDir)
+      await api.fs.write(`${backupDir}/${base}_${type}_${ts}.md`, this._html2md(this._getCleanHTML()))
+
+      const entries = await api.fs.readdir(backupDir)
+      const relevant = entries
+        .filter(e => !e.isDir && e.name.startsWith(`${base}_${type}_`) && e.name.endsWith('.md'))
+        .sort((a, b) => a.name.localeCompare(b.name))
+      for (let i = 0; i < relevant.length - maxSlots; i++) {
+        await api.fs.delete(relevant[i].path)
+      }
+    } catch(e) { console.error('Backup error:', e) }
   },
 
   _getCleanHTML() {
@@ -759,6 +833,7 @@ export const Editor = {
       .replace(/^# (.+)$/gm,   '<h1>$1</h1>')
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
       .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+      .replace(/~~([^~]+)~~/g, '<s>$1</s>')
       .replace(/^> (.+)$/gm,   '<blockquote><p>$1</p></blockquote>')
       .split('\n\n').map(b=>b.startsWith('<')?b:`<p>${b||'<br>'}</p>`).join('')
     );
@@ -776,14 +851,19 @@ export const Editor = {
         case 'h1': return '\n# '+inner+'\n'
         case 'h2': return '\n## '+inner+'\n'
         case 'h3': return '\n### '+inner+'\n'
-        case 'p': case 'div': return inner.trim()?'\n\n'+inner:(n.innerHTML==='<br>'?'\n\n':'')
+        case 'p':
+        case 'div': {
+          const pl = n.style && n.style.paddingLeft;
+          if (pl && inner.trim()) return `\n\n<p style="padding-left:${pl}">${inner}</p>`;
+          return inner.trim()?'\n\n'+inner:(n.innerHTML==='<br>'?'\n\n':'');
+        }
         case 'strong': case 'b': return '**'+inner+'**'
         case 'em': case 'i':     return '*'+inner+'*'
         case 'u':                return inner
         case 's':                return '~~'+inner+'~~'
         case 'blockquote': return '\n> '+inner.replace(/\n\n/g,'\n> ').trim()+'\n'
-        case 'ul': case 'ol': return '\n'+inner+'\n'
-        case 'li': return '- '+inner.trim()+'\n'
+        case 'ul': case 'ol': return `\n\n${n.outerHTML}\n\n`
+        case 'li': return inner
         case 'hr': return '\n---PAGE---\n'  // all HRs are page breaks in clean HTML
         case 'br': return '\n'
         default: return inner
@@ -791,7 +871,7 @@ export const Editor = {
     }
     Array.from(doc.body.childNodes).forEach(n=>{ md+=proc(n) })
     md=md.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&nbsp;/g,' ')
-        .replace(/\n{3,}/g,'\n\n').replace(/^\n+/,'').trim()
+        .replace(/\n{3,}/g,'\n\n').replace(/^\n+/,'')
     if(md&&!md.endsWith('\n')) md+='\n'
     return md
   },
@@ -851,14 +931,14 @@ export const Editor = {
         // html-to-docx uses half-points for its fontSize option
         const docxFontSize = fontSizePt * 2 
 
-        const markdown = this._html2md(this._getCleanHTML())
+        const markdown = this._html2md(this._getExportHTML(fontName, fontSizePt))
         await api.export.docx(p, markdown, { font: fontName, fontSize: docxFontSize })
         alert('Exported!')
       } catch(e) { alert('Failed: ' + e.message) }
     }
   },
 
-  _getCleanHTML(exportFontName, exportFontSizePt) {
+  _getExportHTML(exportFontName, exportFontSizePt) {
     const html = this.core.getHTML();
     const doc = new DOMParser().parseFromString(html, 'text/html');
     const container = doc.body;
