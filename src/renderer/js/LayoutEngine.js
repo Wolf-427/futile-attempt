@@ -128,17 +128,22 @@ export class LayoutEngine {
    */
   getLineStarts(view, start, end) {
     const starts = [start];
-    let lastTop = view.coordsAtPos(start).top;
-    
-    // Iterate through characters to find where the vertical 'top' coordinate shifts.
-    // This indicates a browser-level line wrap.
+    let prev = view.coordsAtPos(start);
+
+    // Iterate through characters to find where the browser actually wraps
+    // to a new visual line. A real wrap moves the caret down AND back to
+    // the left edge. A bold/italic word (or any mid-line formatting change)
+    // can shift the vertical coordinate by a couple of pixels on its own,
+    // at a mark boundary, without any wrap happening — checking 'top' alone
+    // misreads that jitter as a line break and corrupts every line index
+    // after it. Requiring the leftward reset filters that out.
     for (let pos = start + 1; pos < end; pos++) {
       try {
-        const top = view.coordsAtPos(pos).top;
-        if (Math.abs(top - lastTop) > 2) {
+        const cur = view.coordsAtPos(pos);
+        if (cur.top - prev.top > 2 && cur.left < prev.left - 2) {
           starts.push(pos);
-          lastTop = top;
         }
+        prev = cur;
       } catch (e) { /* ignore invalid pos */ }
     }
     return starts;

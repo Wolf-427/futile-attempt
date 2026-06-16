@@ -95,12 +95,23 @@ export class EditorCore {
             if (this.editor.can().sinkListItem('listItem')) {
               return this.editor.chain().sinkListItem('listItem').run();
             }
-            return this.editor.chain().indent().run();
+            this.editor.chain().indent().run();
+            return true;
           },
           'Shift-Tab': () => {
             if (this.editor.can().liftListItem('listItem')) {
               return this.editor.chain().liftListItem('listItem').run();
             }
+            return this.editor.chain().outdent().run();
+          },
+          Backspace: () => {
+            const { selection } = this.editor.state;
+            if (!selection.empty) return false;
+            const { $from } = selection;
+            if ($from.parentOffset !== 0) return false;
+            const node = $from.parent;
+            if (!['paragraph', 'heading'].includes(node.type.name)) return false;
+            if ((node.attrs.indent || 0) === 0) return false;
             return this.editor.chain().outdent().run();
           }
         };

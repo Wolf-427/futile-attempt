@@ -7,6 +7,7 @@ export const Editor = {
   _paginateTimer: null,
   _backupTimer: null,
   _backupDirty: false,
+  _loadSeq:  0,
   core:      null,
   paginator: null,
 
@@ -40,6 +41,8 @@ export const Editor = {
     clearInterval(this._backupTimer)
     this._saveTimer = null
     this._backupTimer = null
+    this._unsubs?.forEach(fn => fn())
+    this._unsubs = null
     if (this._docPath && this.core) {
       try { api.fs.write(this._docPath, this._html2md(this._getCleanHTML())).catch(() => {}) } catch {}
     }
@@ -91,11 +94,13 @@ export const Editor = {
     this._applyPageSize();
     this._setupFocusMode();
     this._initContextMenu();
-    Store.sub(['visibleMargins', 'showFormattingChars', 'paperTheme', 'theme'], async () => {
-      await this._applyPageSize();
-      this._updateUI();
-    });
-    Store.sub(['backupInterval'], () => this._startBackupInterval());
+    this._unsubs = [
+      Store.sub(['visibleMargins', 'showFormattingChars', 'paperTheme', 'theme'], async () => {
+        await this._applyPageSize();
+        this._updateUI();
+      }),
+      Store.sub(['backupInterval'], () => this._startBackupInterval()),
+    ];
 
     _resolveMountReady()
   },
@@ -677,11 +682,19 @@ export const Editor = {
   },
 
   async loadDoc(path) {
+    // Guard against overlapping loadDoc() calls (e.g. rapid document switching):
+    // only the most recently requested call may mutate _docPath/core/save state.
+    // Earlier, superseded calls bail out at each checkpoint below.
+    const seq = ++this._loadSeq
+    clearTimeout(this._paginateTimer)
+
     // Wait for mount() to finish — renderEditor doesn't await mount(), so core may not exist yet
     if (this._mountReady) await this._mountReady
+    if (seq !== this._loadSeq) return
 
     // Take a switch backup if the document was modified since the last backup
     if (this._backupDirty) await this._backupDoc('switch')
+    if (seq !== this._loadSeq) return
 
     // Flush any pending save for the current document before switching paths.
     // setContent(html, false) suppresses onUpdate, so the old save timer would
@@ -689,45 +702,57 @@ export const Editor = {
     clearTimeout(this._saveTimer)
     await this._save()
     this._backupDirty = false
+    if (seq !== this._loadSeq) return
 
     const scroll = document.querySelector('.editor-scroll')
     const isFresh = this._freshMount
     this._freshMount = false
     if (!isFresh && scroll) scroll.classList.add('doc-fade')
 
-    this._docPath = path
-    this._startBackupInterval()
     const [html] = await Promise.all([
       api.fs.read(path).then(c => this._md2html(c)).catch(() => '<p></p>'),
       isFresh ? Promise.resolve() : new Promise(r => setTimeout(r, 150)),
     ])
+    if (seq !== this._loadSeq) return
     if (scroll) scroll.scrollTop = 0
     this.core.setContent(html)
+    // _docPath must only ever point at whatever content is actually in the
+    // editor right now — set it here (not before the read above) so that a
+    // concurrent, still-in-flight loadDoc() can never _save() this path's
+    // content before it has actually been loaded into the editor.
+    this._docPath = path
+    this._startBackupInterval()
     if (!isFresh && scroll) scroll.classList.remove('doc-fade')
 
     this._syncToolbar()
     await this._applyPageSize()
+    if (seq !== this._loadSeq) return
     this._updateUI()
 
     try {
       const v = await api.store.get(`editor-font-size:${path}`)
+      if (seq !== this._loadSeq) return
       const sz = v || 12
       this._setFontSize(sz)
       const s = document.querySelector('.editor-page-sel[title="Font size"]'); if(s) s.value=sz
     } catch {}
     try {
       const f = await api.store.get('editor-font-family')
+      if (seq !== this._loadSeq) return
       if (f) {
         this._setFontFamily(f)
         const inp = document.querySelector('input[title="Font family"]')
         if (inp) { const name = f.startsWith('var(') || f.includes(',') ? 'Lora' : f; inp.value = name; inp.style.fontFamily = `'${name}',serif` }
       }
     } catch {}
-    requestAnimationFrame(()=>this.core.instance.commands.focus('end'))
+    requestAnimationFrame(() => {
+      if (seq === this._loadSeq) this.core.instance.commands.focus('end')
+    })
 
     // Re-paginate after fonts finish loading — on first startup fonts may not
     // be ready when the 150ms debounce fires, causing wrong line-height measurements.
     document.fonts.ready.then(() => {
+      if (seq !== this._loadSeq) return
       clearTimeout(this._paginateTimer)
       this._paginateTimer = setTimeout(() => this.paginator.refresh(), 50)
     })
@@ -831,11 +856,16 @@ export const Editor = {
       .replace(/^### (.+)$/gm, '<h3>$1</h3>')
       .replace(/^## (.+)$/gm,  '<h2>$1</h2>')
       .replace(/^# (.+)$/gm,   '<h1>$1</h1>')
+      .replace(/^> (.+)$/gm,   '<blockquote><p>$1</p></blockquote>')
+      // Block-level wrapping must happen before inline marks are applied —
+      // a paragraph starting with **bold**/*italic*/~~strike~~ would otherwise
+      // start with '<' after this replacement and get mistaken for an
+      // already-block-level tag, silently dropping its <p> wrapper (the
+      // paragraph then merges into the previous one on next load).
+      .split('\n\n').map(b=>b.startsWith('<')?b:`<p>${b||'<br>'}</p>`).join('')
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
       .replace(/\*([^*]+)\*/g, '<em>$1</em>')
       .replace(/~~([^~]+)~~/g, '<s>$1</s>')
-      .replace(/^> (.+)$/gm,   '<blockquote><p>$1</p></blockquote>')
-      .split('\n\n').map(b=>b.startsWith('<')?b:`<p>${b||'<br>'}</p>`).join('')
     );
   },
 

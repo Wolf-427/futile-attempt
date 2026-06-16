@@ -213,10 +213,12 @@ textarea,input{font-family:var(--sans);}
 }
 
 /* ── Zero-Margin Block Spacing ───────────────────────────────────────────── */
-.ProseMirror > * { 
-  margin: 0 !important; 
-  padding: 0 !important; 
-  display: block; 
+.ProseMirror > * {
+  margin: 0 !important;
+  padding-top: 0 !important;
+  padding-right: 0 !important;
+  padding-bottom: 0 !important;
+  display: block;
   position: relative;
   contain: layout;
 }
@@ -227,12 +229,14 @@ textarea,input{font-family:var(--sans);}
 .ProseMirror h3 { padding-bottom: 16px !important; font-size: 18px; font-weight: 500; font-style: italic; color: var(--tx2); }
 
 /* ── Block Spacing (Padding instead of Margin) ────────────────────────────── */
-/* We use padding because it is included in getBoundingClientRect, 
+/* We use padding because it is included in getBoundingClientRect,
    preventing compounding alignment drift during pagination. */
-.ProseMirror > * { 
-  margin: 0 !important; 
-  padding: 0 !important; 
-  display: block; 
+.ProseMirror > * {
+  margin: 0 !important;
+  padding-top: 0 !important;
+  padding-right: 0 !important;
+  padding-bottom: 0 !important;
+  display: block;
   position: relative;
   contain: layout; /* Helps with coordinate isolation */
 }
