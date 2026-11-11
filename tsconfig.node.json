@@ -1,5 +1,5 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": { "types": ["node"], "lib": ["ES2022", "DOM"] },
-  "include": ["src/main", "src/preload", "src/shared", "tests", "electron.vite.config.mts", "vitest.config.mts", "playwright.config.ts"]
+  "include": ["src/main", "src/preload", "src/shared", "tests", "electron.vite.config.mts", "vitest.config.mts", "vitest.cloud.config.mts", "playwright.config.ts"]
 }

@@ -1,6 +1,9 @@
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, dialog, shell } from 'electron'
 import { join } from 'node:path'
 import { registerIpc } from './ipc'
+import { StorageService } from './storage'
+
+let storage: StorageService | null = null
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -40,6 +43,7 @@ function createWindow(): BrowserWindow {
 }
 
 void app.whenReady().then(() => {
+  storage = new StorageService(join(app.getPath('userData'), 'snapshots'))
   registerIpc()
   createWindow()
   app.on('activate', () => {
@@ -49,4 +53,30 @@ void app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+// Quitting waits for every pending write. If something cannot be saved, the
+// user decides whether to quit anyway.
+let readyToQuit = false
+app.on('before-quit', (event) => {
+  if (readyToQuit || !storage) return
+  event.preventDefault()
+  void storage
+    .flushAll()
+    .catch((e: unknown) => [e instanceof Error ? e.message : String(e)])
+    .then(async (unsaved) => {
+      if (unsaved.length > 0) {
+        const { response } = await dialog.showMessageBox({
+          type: 'warning',
+          message: 'Some changes could not be saved.',
+          detail: unsaved.join('\n'),
+          buttons: ['Keep Scriptum open', 'Quit anyway'],
+          defaultId: 0,
+          cancelId: 0
+        })
+        if (response === 0) return
+      }
+      readyToQuit = true
+      app.quit()
+    })
 })

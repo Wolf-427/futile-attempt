@@ -1,0 +1,6 @@
+export { StorageService } from './service'
+export { ProjectStore, type OpenResult, type ItemResult, type ProjectOptions } from './project'
+export { SnapshotStore, type SnapshotInfo } from './snapshots'
+export { TrackedFile, NotLoadedError, type LoadResult } from './trackedFile'
+export { atomicWrite, cleanTempFiles } from './atomic'
+export { probe, stubPathFor, type Presence } from './fileState'
