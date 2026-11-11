@@ -1,0 +1,45 @@
+:root {
+  color-scheme: dark;
+  --bg: #0f0f0d;
+  --fg: #e8e6e1;
+  --muted: #8a8780;
+  --sans: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --serif: Georgia, 'Times New Roman', serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+}
+
+.shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  -webkit-app-region: drag;
+}
+
+.shell h1 {
+  margin: 0;
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: 40px;
+  letter-spacing: 0.02em;
+}
+
+.shell p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}

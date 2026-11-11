@@ -1,7 +1,0 @@
-export { Editor, Extension, Mark, Node } from '@tiptap/core'
-export { StarterKit } from '@tiptap/starter-kit'
-export { Placeholder } from '@tiptap/extension-placeholder'
-export { Underline } from '@tiptap/extension-underline'
-export { TextAlign } from '@tiptap/extension-text-align'
-export { Plugin, PluginKey } from '@tiptap/pm/state'
-export { Decoration, DecorationSet } from '@tiptap/pm/view'

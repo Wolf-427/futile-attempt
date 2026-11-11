@@ -1,7 +1,9 @@
 node_modules/
-build/
+out/
 dist/
-src/build-sha.txt
+test-results/
+playwright-report/
 .DS_Store
 *.log
+.env
 .env.local
