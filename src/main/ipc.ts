@@ -4,6 +4,7 @@ import type {
   IpcArgs,
   IpcChannel,
   IpcResult,
+  ItemLoad,
   Mutation,
   MutationResult,
   OpenProjectResult,
@@ -40,6 +41,27 @@ function emptyItem(kind: ItemKind): DocumentFile | BoardFile | CharacterFile {
 
 function cleanTitle(title: string, fallback: string): string {
   return title.replace(/\s+/g, ' ').trim().slice(0, 200) || fallback
+}
+
+const handOverWaiters = new Map<number, () => void>()
+
+/**
+ * Ask a window to hand over content its editors still hold, and wait for it.
+ * Gives up after a few seconds so a hung page can never block quitting.
+ */
+export function requestHandOver(window: BrowserWindow): Promise<void> {
+  if (window.isDestroyed() || window.webContents.isLoading()) return Promise.resolve()
+  return new Promise((resolve) => {
+    const id = window.webContents.id
+    const done = (): void => {
+      clearTimeout(timer)
+      handOverWaiters.delete(id)
+      resolve()
+    }
+    const timer = setTimeout(done, 3000)
+    handOverWaiters.set(id, done)
+    window.webContents.send('app:handOver', null)
+  })
 }
 
 export function registerIpc(storage: StorageService, state: AppState): void {
@@ -98,6 +120,10 @@ export function registerIpc(storage: StorageService, state: AppState): void {
     chrome: process.versions.chrome ?? ''
   }))
 
+  handle('app:handedOver', (event) => {
+    handOverWaiters.get(event.sender.id)?.()
+  })
+
   handle('projects:recent', () => state.recent())
 
   handle('projects:forget', async (_event, dir) => {
@@ -148,6 +174,21 @@ export function registerIpc(storage: StorageService, state: AppState): void {
   handle('project:reveal', async () => {
     await shell.openPath(requireCurrent().dir)
   })
+
+  const loadResult = async (project: ProjectStore, kind: ItemKind, id: string, reload: boolean): Promise<ItemLoad> => {
+    const item = reload ? await project.reloadItem(kind, id) : await project.loadItem(kind, id)
+    if (!item.ok) return item
+    const status = project.itemStatus(kind, id)
+    if (!status) return { ok: false, state: 'unavailable', error: 'Item is not loaded' }
+    return { ok: true, value: item.value, status }
+  }
+
+  handle('item:load', (_event, kind, id) => loadResult(requireCurrent(), kind, id, false))
+  handle('item:reload', (_event, kind, id) => loadResult(requireCurrent(), kind, id, true))
+  handle('item:update', (_event, kind, id, value) => {
+    requireCurrent().updateItem(kind, id, value)
+  })
+  handle('item:flush', (_event, kind, id) => current?.flushItem(kind, id) ?? null)
 
   handle('project:mutate', async (_event, m: Mutation): Promise<MutationResult> => {
     const project = requireCurrent()

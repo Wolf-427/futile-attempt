@@ -6,7 +6,7 @@
  * registers a handler per entry, the preload exposes one function per entry,
  * and TypeScript checks both sides against this file.
  */
-import type { FileState, ItemKind, ProjectManifest } from './project'
+import type { FileState, ItemKind, ItemStatus, ProjectManifest } from './project'
 
 export interface AppInfo {
   name: string
@@ -53,8 +53,28 @@ export interface MutationResult {
   createdId?: string
 }
 
+/** The content of one item, or why it cannot be shown. Never an empty stand-in. */
+export type ItemLoad =
+  | { ok: true; value: unknown; status: ItemStatus }
+  | { ok: false; state: Exclude<FileState, 'local'>; error?: string }
+
+export interface ItemStatusEvent {
+  kind: ItemKind
+  id: string
+  status: ItemStatus
+}
+
+/** Messages pushed from main to the renderer. */
+export interface IpcEvents {
+  'item:status': ItemStatusEvent
+  /** The window or app is about to close: hand over unsaved content, then call app.handedOver(). */
+  'app:handOver': null
+}
+
 export interface IpcContract {
   'app:getInfo': { args: []; result: AppInfo }
+  /** The renderer's answer to the app:handOver event. */
+  'app:handedOver': { args: []; result: void }
   'projects:recent': { args: []; result: RecentProject[] }
   /** Asks the user where to put it, then creates and opens the project. */
   'projects:create': { args: [name: string]; result: OpenProjectResult }
@@ -67,6 +87,13 @@ export interface IpcContract {
   /** Writes everything pending and closes the project. Returns what could not be saved. */
   'project:close': { args: []; result: string[] }
   'project:reveal': { args: []; result: void }
+  'item:load': { args: [kind: ItemKind, id: string]; result: ItemLoad }
+  /** Forget what is loaded (and any conflict) and read the file again. */
+  'item:reload': { args: [kind: ItemKind, id: string]; result: ItemLoad }
+  /** Hand over new content. It is written after a short delay. */
+  'item:update': { args: [kind: ItemKind, id: string, value: unknown]; result: void }
+  /** Write pending content now and wait for it. */
+  'item:flush': { args: [kind: ItemKind, id: string]; result: ItemStatus | null }
 }
 
 export type IpcChannel = keyof IpcContract
@@ -76,6 +103,7 @@ export type IpcResult<C extends IpcChannel> = IpcContract[C]['result']
 /** Runtime list of channels. Typed so it cannot drift from the contract. */
 export const IPC_CHANNELS = [
   'app:getInfo',
+  'app:handedOver',
   'projects:recent',
   'projects:create',
   'projects:open',
@@ -83,7 +111,11 @@ export const IPC_CHANNELS = [
   'project:current',
   'project:mutate',
   'project:close',
-  'project:reveal'
+  'project:reveal',
+  'item:load',
+  'item:reload',
+  'item:update',
+  'item:flush'
 ] as const satisfies readonly IpcChannel[]
 
 type Missing = Exclude<IpcChannel, (typeof IPC_CHANNELS)[number]>
@@ -99,6 +131,8 @@ export function isIpcChannel(value: unknown): value is IpcChannel {
 export interface ScriptumApi {
   app: {
     getInfo(): Promise<AppInfo>
+    onHandOver(listener: () => void): () => void
+    handedOver(): Promise<void>
   }
   projects: {
     recent(): Promise<RecentProject[]>
@@ -111,5 +145,13 @@ export interface ScriptumApi {
     mutate(mutation: Mutation): Promise<MutationResult>
     close(): Promise<string[]>
     reveal(): Promise<void>
+  }
+  items: {
+    load(kind: ItemKind, id: string): Promise<ItemLoad>
+    reload(kind: ItemKind, id: string): Promise<ItemLoad>
+    update(kind: ItemKind, id: string, value: unknown): Promise<void>
+    flush(kind: ItemKind, id: string): Promise<ItemStatus | null>
+    /** Subscribe to save-state changes. Returns the function that unsubscribes. */
+    onStatus(listener: (event: ItemStatusEvent) => void): () => void
   }
 }

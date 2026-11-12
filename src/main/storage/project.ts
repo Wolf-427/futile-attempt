@@ -358,6 +358,11 @@ export class ProjectStore {
     return this.loadItem<T>(kind, id)
   }
 
+  /** Write one item's pending content now. Null if the item is not open. */
+  async flushItem(kind: ItemKind, id: string): Promise<ItemStatus | null> {
+    return (await this.files.get(`${kind}/${id}`)?.flush()) ?? null
+  }
+
   itemStatus(kind: ItemKind, id: string): ItemStatus | null {
     return this.files.get(`${kind}/${id}`)?.status() ?? null
   }

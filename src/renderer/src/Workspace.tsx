@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import type { ItemKind, TreeNode } from '@shared/project'
+import { DocumentEditor } from './editor/DocumentEditor'
 import { Sidebar } from './Sidebar'
 import { useApp, type View } from './store'
 import { InlineEdit } from './ui'
@@ -10,8 +11,7 @@ const VIEWS: { view: View; label: string }[] = [
   { view: 'characters', label: 'Characters' }
 ]
 
-const COMING: Record<ItemKind, string> = {
-  documents: 'The editor arrives in phase 5.',
+const COMING: Record<Exclude<ItemKind, 'documents'>, string> = {
   boards: 'The canvas arrives in phase 7.',
   characters: 'Character sheets arrive in phase 8.'
 }
@@ -32,11 +32,18 @@ export function Workspace() {
   const view = useApp((s) => s.view)
   const selected = useApp((s) => s.selected)
   const renaming = useApp((s) => s.renaming)
+  const focus = useApp((s) => s.focus)
   const { closeProject, mutate, setView, startRename } = useApp.getState()
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       const state = useApp.getState()
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault()
+        state.setFocus(!state.focus)
+        return
+      }
+      if (e.key === 'Escape' && state.focus) state.setFocus(false)
       if (state.renaming || (e.target instanceof HTMLElement && e.target.matches('input, textarea, [contenteditable]'))) return
       const current = state.selected
       if (e.key === 'F2' && current) state.startRename(current.id)
@@ -58,7 +65,7 @@ export function Workspace() {
   const state = selected ? project.states[`${selected.kind}/${selected.id}`] : undefined
 
   return (
-    <div className="workspace" data-testid="workspace">
+    <div className={focus ? 'workspace focus' : 'workspace'} data-testid="workspace">
       <header className="titlebar">
         <div className="titlebar-lights" />
         <button className="titlebar-btn" data-testid="home" title="Close project" onClick={() => void closeProject()}>
@@ -90,7 +97,9 @@ export function Workspace() {
       <div className="body">
         <Sidebar />
         <main className="main">
-          {selected && title !== undefined ? (
+          {selected?.kind === 'documents' && title !== undefined ? (
+            <DocumentEditor key={selected.id} id={selected.id} />
+          ) : selected && selected.kind !== 'documents' && title !== undefined ? (
             <div className="placeholder" data-testid="main-pane">
               <h2>{title}</h2>
               {state && state !== 'local' && <p className="placeholder-state">File state: {state}</p>}

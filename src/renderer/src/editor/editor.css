@@ -1,0 +1,51 @@
+/* The desk is the dark surface; the paper sits on it, one sheet per page. */
+.editor { flex: 1; min-width: 0; display: flex; flex-direction: column; --desk-bg: var(--bg); --paper-bg: #f7f5ef; --paper-tx: #1b1a17; }
+.desk { flex: 1; overflow-y: auto; padding: 28px 24px 80px; background: var(--desk-bg); }
+.desk > div { display: flex; justify-content: center; }
+
+.paper { background: var(--paper-bg); color: var(--paper-tx); font-family: var(--serif); font-size: 16px; line-height: 1.55; outline: none; user-select: text; cursor: text; border: none !important; box-shadow: 0 2px 14px rgba(0, 0, 0, 0.45); caret-color: var(--paper-tx); overflow-wrap: break-word; }
+.paper p { margin: 0; }
+.paper h1, .paper h2, .paper h3 { font-weight: 600; line-height: 1.25; margin: 0; padding: 0.6em 0 0.25em; }
+.paper h1 { font-size: 1.75em; }
+.paper h2 { font-size: 1.35em; }
+.paper h3 { font-size: 1.12em; }
+.paper blockquote { margin: 0; padding-left: 1.2em; border-left: 3px solid rgba(0, 0, 0, 0.22); color: #45423b; }
+.paper ul, .paper ol { margin: 0; padding-left: 1.6em; }
+.paper ::selection { background: rgba(201, 169, 110, 0.4); }
+.paper .ProseMirror-selectednode { outline: 2px solid var(--accent); }
+
+/* Page numbers and the gap between sheets. */
+.paper .rm-page-footer, .paper .rm-page-header { font-family: var(--sans); font-size: 11px; color: #8a867c; user-select: none; }
+.paper .rm-pagination-gap { border: none !important; }
+
+/* A manual page break fills the rest of its page; a dashed rule marks where it was set. */
+.paper .page-break { position: relative; height: 0; user-select: none; cursor: default; }
+.paper .page-break::before { content: 'Page break'; position: absolute; left: 0; right: 0; top: 6px; border-top: 1px dashed rgba(0, 0, 0, 0.3); padding-top: 3px; font-family: var(--sans); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: #9a968c; text-align: center; }
+
+.paper .search-match { background: rgba(201, 169, 110, 0.45); border-radius: 2px; }
+.paper .search-match.current { background: #e8a23a; }
+
+/* Toolbar, find bar, status line */
+.toolbar, .findbar { display: flex; align-items: center; gap: 2px; padding: 6px 12px; background: var(--bg1); border-bottom: 1px solid var(--b0); flex-shrink: 0; flex-wrap: wrap; }
+.tool { min-width: 28px; height: 26px; padding: 0 7px; background: transparent; border: none; border-radius: var(--r); color: var(--tx2); font-size: 12.5px; }
+.tool:hover:not(:disabled) { background: var(--bgh); color: var(--tx); }
+.tool.active { background: var(--bga); color: var(--accent); }
+.tool:disabled { opacity: 0.35; cursor: default; }
+.tool-sep { width: 1px; height: 16px; margin: 0 6px; background: var(--b1); }
+.tool-space { flex: 1; }
+.tool-select { height: 26px; padding: 0 6px; background: var(--bg2); border: 1px solid var(--b0); border-radius: var(--r); color: var(--tx); font-size: 12.5px; }
+.find-field { width: 190px; padding: 4px 8px; font-size: 12.5px; border-color: var(--b1); }
+.find-field:focus { border-color: var(--accent); }
+.find-count { min-width: 74px; padding: 0 8px; font-size: 11.5px; color: var(--tx3); }
+.editor-status { display: flex; justify-content: space-between; gap: 16px; padding: 5px 14px; background: var(--bg1); border-top: 1px solid var(--b0); font-size: 11.5px; color: var(--tx3); flex-shrink: 0; }
+.save-error { color: var(--err); }
+.save-conflict { color: var(--accent); }
+.link { background: none; border: none; color: inherit; text-decoration: underline; font-size: inherit; }
+
+.editor-message { margin: auto; max-width: 420px; text-align: center; color: var(--tx2); }
+.editor-message h2 { font-family: var(--serif); font-weight: 400; font-size: 22px; color: var(--tx); margin-bottom: 8px; }
+.editor-message p { margin-bottom: 10px; }
+.editor-message-error { font-family: var(--mono); font-size: 11.5px; color: var(--tx3); }
+
+/* Focus mode: only the page. */
+.workspace.focus .titlebar, .workspace.focus .sidebar, .workspace.focus .toolbar, .workspace.focus .editor-status { display: none; }

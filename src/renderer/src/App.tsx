@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { flushPending } from './pending'
 import { StartScreen } from './StartScreen'
 import { useApp } from './store'
 import { Workspace } from './Workspace'
@@ -18,7 +19,13 @@ export function App() {
       }
     }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    const stopHandOver = window.scriptum.app.onHandOver(() => {
+      void flushPending().finally(() => window.scriptum.app.handedOver())
+    })
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      stopHandOver()
+    }
   }, [])
 
   if (!ready) return null

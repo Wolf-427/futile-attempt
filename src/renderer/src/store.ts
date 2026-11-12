@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { Mutation, OpenProjectResult, ProjectSnapshot, RecentProject } from '@shared/ipc'
 import type { ItemKind, TreeNode } from '@shared/project'
+import { flushPending } from './pending'
 
 export type View = ItemKind
 
@@ -38,6 +39,8 @@ interface State {
   /** Id of the row currently being renamed inline. */
   renaming: string | null
   error: string | null
+  /** Focus mode: everything but the page is hidden. */
+  focus: boolean
 
   init(): Promise<void>
   createProject(name: string): Promise<boolean>
@@ -49,6 +52,7 @@ interface State {
   select(selection: Selection | null): void
   startRename(id: string | null): void
   showError(message: string | null): void
+  setFocus(focus: boolean): void
 }
 
 const message = (e: unknown): string =>
@@ -80,6 +84,7 @@ export const useApp = create<State>((set, get) => {
     lastByView: {},
     renaming: null,
     error: null,
+    focus: false,
 
     async init() {
       const [recent, project] = await Promise.all([
@@ -91,6 +96,7 @@ export const useApp = create<State>((set, get) => {
 
     async createProject(name) {
       try {
+        await flushPending()
         return adopt(await window.scriptum.projects.create(name))
       } catch (e) {
         set({ error: message(e) })
@@ -100,6 +106,7 @@ export const useApp = create<State>((set, get) => {
 
     async openProject(dir) {
       try {
+        await flushPending()
         const opened = adopt(await window.scriptum.projects.open(dir))
         if (!opened) set({ recent: await window.scriptum.projects.recent() })
         return opened
@@ -115,12 +122,13 @@ export const useApp = create<State>((set, get) => {
 
     async closeProject() {
       try {
+        await flushPending()
         const unsaved = await window.scriptum.project.close()
         if (unsaved.length) {
           set({ error: `Some changes could not be saved, so the project stays open: ${unsaved.join(', ')}` })
           return
         }
-        set({ project: null, selected: null, renaming: null, recent: await window.scriptum.projects.recent() })
+        set({ project: null, selected: null, renaming: null, focus: false, recent: await window.scriptum.projects.recent() })
       } catch (e) {
         set({ error: message(e) })
       }
@@ -150,6 +158,7 @@ export const useApp = create<State>((set, get) => {
         lastByView: selected ? { ...s.lastByView, [selected.kind]: selected.id } : s.lastByView
       })),
     startRename: (renaming) => set({ renaming }),
-    showError: (error) => set({ error })
+    showError: (error) => set({ error }),
+    setFocus: (focus) => set({ focus })
   }
 })

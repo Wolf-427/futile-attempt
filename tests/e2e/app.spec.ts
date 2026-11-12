@@ -1,45 +1,13 @@
-import { mkdtemp, readFile, rename, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readFile, rename } from 'node:fs/promises'
 import { join } from 'node:path'
-import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test'
+import { expect, test } from '@playwright/test'
+import { launch as launchWith, renameTo, row, useTempDirs, type Session } from './helpers'
 
-// Chromium's OS-level sandbox cannot start as root on Linux CI machines.
-const args = ['.', ...(process.platform === 'linux' ? ['--no-sandbox'] : [])]
-
-let profile: string
-let workDir: string
-
-test.beforeEach(async () => {
-  profile = await mkdtemp(join(tmpdir(), 'scriptum-e2e-profile-'))
-  workDir = await mkdtemp(join(tmpdir(), 'scriptum-e2e-work-'))
-})
-
-test.afterEach(async () => {
-  await rm(profile, { recursive: true, force: true })
-  await rm(workDir, { recursive: true, force: true })
-})
-
-/** Launch with a throwaway profile. `pick` is what every folder dialog answers. */
-async function launch(pick: string): Promise<{ app: ElectronApplication; page: Page }> {
-  const app = await electron.launch({
-    args,
-    env: { ...process.env, SCRIPTUM_USER_DATA: profile, SCRIPTUM_E2E_PICK_DIR: pick }
-  })
-  return { app, page: await app.firstWindow() }
-}
-
-const row = (page: Page, title: string) =>
-  page.locator('[data-testid="item-row"], [data-testid="folder-row"]').filter({ hasText: title })
-
-async function renameTo(page: Page, title: string): Promise<void> {
-  const input = page.getByTestId('rename-input')
-  await input.fill(title)
-  await input.press('Enter')
-  await expect(input).toHaveCount(0)
-}
+const dirs = useTempDirs()
+const launch = (pick: string): Promise<Session> => launchWith(dirs.profile(), pick)
 
 test('the renderer is isolated and only sees the declared API', async () => {
-  const { app, page } = await launch(workDir)
+  const { app, page } = await launch(dirs.workDir())
   try {
     await expect(page.getByTestId('app-title')).toHaveText('Scriptum')
     const surface = await page.evaluate(() => ({
@@ -47,7 +15,7 @@ test('the renderer is isolated and only sees the declared API', async () => {
       hasProcess: typeof (globalThis as Record<string, unknown>)['process'] !== 'undefined',
       api: Object.keys(window.scriptum).sort()
     }))
-    expect(surface).toEqual({ hasRequire: false, hasProcess: false, api: ['app', 'project', 'projects'] })
+    expect(surface).toEqual({ hasRequire: false, hasProcess: false, api: ['app', 'items', 'project', 'projects'] })
   } finally {
     await app.close()
   }
@@ -55,7 +23,7 @@ test('the renderer is isolated and only sees the declared API', async () => {
 
 test('create, organise, close, move the folder in Finder, reopen: nothing is lost', async () => {
   // ── first session ────────────────────────────────────────────────────────
-  let { app, page } = await launch(workDir)
+  let { app, page } = await launch(dirs.workDir())
   await page.getByTestId('new-project').click()
   await page.getByTestId('project-name').fill('Mein Roman')
   await page.getByTestId('create-project').click()
@@ -65,7 +33,7 @@ test('create, organise, close, move the folder in Finder, reopen: nothing is los
   // New document, named inline.
   await page.getByTestId('add-item').click()
   await renameTo(page, 'Kapitel 1')
-  await expect(page.getByTestId('main-pane')).toContainText('Kapitel 1')
+  await expect(page.getByTestId('editor')).toBeVisible()
 
   // New folder, and a document created inside it from the context menu.
   await page.getByTestId('add-folder').click()
@@ -105,7 +73,8 @@ test('create, organise, close, move the folder in Finder, reopen: nothing is los
   await renameTo(page, 'Kath')
   await expect(page.getByTestId('main-pane')).toContainText('Kath')
   await page.getByTestId('nav-documents').click()
-  await expect(page.getByTestId('main-pane')).toContainText('Prolog')
+  await expect(row(page, 'Prolog')).toHaveClass(/active/)
+  await expect(page.getByTestId('editor')).toBeVisible()
   await page.getByTestId('nav-characters').click()
   await expect(page.getByTestId('main-pane')).toContainText('Kath')
   await page.screenshot({ path: 'test-results/workspace.png' })
@@ -118,10 +87,10 @@ test('create, organise, close, move the folder in Finder, reopen: nothing is los
   await app.close()
 
   // ── the folder is moved while the app is closed ──────────────────────────
-  const original = join(workDir, 'mein-roman')
-  const moved = join(workDir, 'Verschoben')
+  const original = join(dirs.workDir(), 'mein-roman')
+  const moved = join(dirs.workDir(), 'Verschoben')
   const manifest = JSON.parse(await readFile(join(original, 'scriptum.json'), 'utf8'))
-  expect(JSON.stringify(manifest)).not.toContain(workDir) // no absolute paths inside the project
+  expect(JSON.stringify(manifest)).not.toContain(dirs.workDir()) // no absolute paths inside the project
   await rename(original, moved)
 
   // ── second session ───────────────────────────────────────────────────────
