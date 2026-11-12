@@ -1,9 +1,14 @@
 import { app, BrowserWindow, dialog, shell } from 'electron'
 import { join } from 'node:path'
+import { AppState } from './appState'
 import { registerIpc } from './ipc'
 import { StorageService } from './storage'
 
 let storage: StorageService | null = null
+
+// Tests point the app at a throwaway profile so they never touch real settings.
+const testProfile = process.env['SCRIPTUM_USER_DATA']
+if (testProfile) app.setPath('userData', testProfile)
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -42,9 +47,11 @@ function createWindow(): BrowserWindow {
   return win
 }
 
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
   storage = new StorageService(join(app.getPath('userData'), 'snapshots'))
-  registerIpc()
+  const state = new AppState(join(app.getPath('userData'), 'app-state.json'))
+  await state.load()
+  registerIpc(storage, state)
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

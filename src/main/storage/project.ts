@@ -14,7 +14,7 @@ import {
 } from '@shared/project'
 import { cleanTempFiles } from './atomic'
 import { probe } from './fileState'
-import { errorMessage, exists, realFs, type Fs } from './fs'
+import { errorCode, errorMessage, exists, realFs, type Fs } from './fs'
 import type { SnapshotStore } from './snapshots'
 import { TrackedFile, type TrackedFileOptions } from './trackedFile'
 
@@ -137,6 +137,19 @@ function findNode(tree: TreeNode[], id: string): TreeNode | undefined {
     if (node.id === id) return node
     if (node.type === 'folder') {
       const hit = findNode(node.children, id)
+      if (hit) return hit
+    }
+  }
+  return undefined
+}
+
+/** Remove a node from the tree and return it. */
+function detach(tree: TreeNode[], id: string): TreeNode | undefined {
+  const i = tree.findIndex((n) => n.id === id)
+  if (i >= 0) return tree.splice(i, 1)[0]
+  for (const node of tree) {
+    if (node.type === 'folder') {
+      const hit = detach(node.children, id)
       if (hit) return hit
     }
   }
@@ -370,6 +383,177 @@ export class ProjectStore {
       }
     }
     return out
+  }
+
+  // ── organising ───────────────────────────────────────────────────────────
+
+  async createFolder(title: string, parentFolderId?: string): Promise<string> {
+    const next = structuredClone(this.manifestData)
+    const parent = parentFolderId ? findNode(next.tree, parentFolderId) : undefined
+    if (parentFolderId && parent?.type !== 'folder') throw new Error(`No such folder: ${parentFolderId}`)
+    const id = randomUUID()
+    const siblings = parent?.type === 'folder' ? parent.children : next.tree
+    siblings.push({ type: 'folder', id, title, children: [] })
+    await this.writeManifest(next)
+    return id
+  }
+
+  async renameFolder(id: string, title: string): Promise<void> {
+    const next = structuredClone(this.manifestData)
+    const node = findNode(next.tree, id)
+    if (node?.type !== 'folder') throw new Error(`No such folder: ${id}`)
+    node.title = title
+    await this.writeManifest(next)
+  }
+
+  /** Move a document or folder to `index` inside a folder, or the top level when `parentFolderId` is null. */
+  async moveNode(id: string, parentFolderId: string | null, index: number): Promise<void> {
+    const next = structuredClone(this.manifestData)
+    const moving = findNode(next.tree, id)
+    if (!moving) throw new Error(`No such item: ${id}`)
+    if (parentFolderId !== null) {
+      if (parentFolderId === id) throw new Error('A folder cannot be moved into itself')
+      if (moving.type === 'folder' && findNode(moving.children, parentFolderId)) {
+        throw new Error('A folder cannot be moved into one of its own subfolders')
+      }
+    }
+    // Positions are given against the list as displayed, which still contains the moving node.
+    const parent = parentFolderId === null ? undefined : findNode(next.tree, parentFolderId)
+    if (parentFolderId !== null && parent?.type !== 'folder') {
+      throw new Error(`No such folder: ${parentFolderId}`)
+    }
+    const before = parent?.type === 'folder' ? parent.children : next.tree
+    const oldIndex = before.findIndex((n) => n.id === id)
+    detach(next.tree, id)
+    let at = Math.max(0, Math.min(index, before.length + (oldIndex >= 0 ? 1 : 0)))
+    if (oldIndex >= 0 && oldIndex < at) at--
+    before.splice(Math.min(at, before.length), 0, moving)
+    await this.writeManifest(next)
+  }
+
+  /** Change the position of a board or character in its list. */
+  async reorderIndexEntry(kind: 'boards' | 'characters', id: string, index: number): Promise<void> {
+    const next = structuredClone(this.manifestData)
+    const list = next[kind]
+    const from = list.findIndex((e) => e.id === id)
+    const entry = list[from]
+    if (!entry) throw new Error(`No such item: ${kind}/${id}`)
+    list.splice(from, 1)
+    let at = Math.max(0, Math.min(index, list.length + 1))
+    if (from < at) at--
+    list.splice(Math.min(at, list.length), 0, entry)
+    await this.writeManifest(next)
+  }
+
+  // ── trash ────────────────────────────────────────────────────────────────
+
+  private trashPath(kind: ItemKind, id: string): string {
+    if (!ID_PATTERN.test(id)) throw new Error(`Invalid item id: ${id}`)
+    return join(this.dir, 'trash', kind, `${id}.json`)
+  }
+
+  /** Move an item's file into the project's trash folder. Nothing is deleted. */
+  async trashItem(kind: ItemKind, id: string): Promise<void> {
+    const fs = this.options.fs ?? realFs
+    const next = structuredClone(this.manifestData)
+    let title: string | undefined
+    if (kind === 'documents') {
+      const node = findNode(next.tree, id)
+      if (node?.type === 'document') title = detach(next.tree, id)?.title
+    } else {
+      const i = next[kind].findIndex((e) => e.id === id)
+      title = next[kind].splice(i, i >= 0 ? 1 : 0)[0]?.title
+    }
+    if (title === undefined) throw new Error(`No such item: ${kind}/${id}`)
+
+    const key = `${kind}/${id}`
+    const open = this.files.get(key)
+    if (open) {
+      const status = await open.flush()
+      if (status.saveState === 'error') {
+        throw new Error(`Cannot move to trash: unsaved changes could not be written (${status.error ?? ''})`)
+      }
+      open.dispose()
+      this.files.delete(key)
+    }
+
+    const from = this.itemPath(kind, id)
+    const to = this.trashPath(kind, id)
+    let moved = false
+    try {
+      await fs.mkdir(join(this.dir, 'trash', kind), { recursive: true })
+      await fs.rename(from, to)
+      moved = true
+    } catch (e) {
+      // The file is already gone: just drop the entry. Anything else is a real failure.
+      if (errorCode(e) !== 'ENOENT') throw e
+    }
+    if (moved) next.trash.push({ kind, id, title, trashedAt: this.now().getTime() })
+    try {
+      await this.writeManifest(next)
+    } catch (e) {
+      if (moved) await fs.rename(to, from).catch(() => undefined)
+      throw e
+    }
+  }
+
+  /** Trash every document inside a folder (at any depth), then remove the folder. */
+  async trashFolder(id: string): Promise<void> {
+    const node = findNode(this.manifestData.tree, id)
+    if (node?.type !== 'folder') throw new Error(`No such folder: ${id}`)
+    for (const docId of documentIds(node.children)) await this.trashItem('documents', docId)
+    const next = structuredClone(this.manifestData)
+    detach(next.tree, id)
+    await this.writeManifest(next)
+  }
+
+  async restoreItem(id: string): Promise<void> {
+    const fs = this.options.fs ?? realFs
+    const next = structuredClone(this.manifestData)
+    const i = next.trash.findIndex((t) => t.id === id)
+    const entry = next.trash[i]
+    if (!entry) throw new Error(`Not in trash: ${id}`)
+    next.trash.splice(i, 1)
+    if (entry.kind === 'documents') next.tree.push({ type: 'document', id, title: entry.title })
+    else next[entry.kind].push({ id, title: entry.title })
+
+    const from = this.trashPath(entry.kind, id)
+    const to = this.itemPath(entry.kind, id)
+    await fs.rename(from, to)
+    try {
+      await this.writeManifest(next)
+    } catch (e) {
+      await fs.rename(to, from).catch(() => undefined)
+      throw e
+    }
+  }
+
+  /** Permanently delete trashed items: one by id, or all of them. */
+  async deleteFromTrash(id?: string): Promise<void> {
+    const fs = this.options.fs ?? realFs
+    const next = structuredClone(this.manifestData)
+    const doomed = next.trash.filter((t) => id === undefined || t.id === id)
+    if (id !== undefined && doomed.length === 0) throw new Error(`Not in trash: ${id}`)
+    next.trash = next.trash.filter((t) => !doomed.includes(t))
+    // Manifest first: a leftover file in trash/ is harmless, a listed entry without a file is not.
+    await this.writeManifest(next)
+    for (const entry of doomed) {
+      try {
+        await fs.unlink(this.trashPath(entry.kind, entry.id))
+      } catch (e) {
+        if (errorCode(e) !== 'ENOENT') throw e
+      }
+    }
+  }
+
+  async renameProject(name: string): Promise<void> {
+    const title = name.trim()
+    if (!title) throw new Error('Project name is empty')
+    await this.writeManifest({ ...structuredClone(this.manifestData), name: title })
+  }
+
+  private now(): Date {
+    return this.options.file?.now?.() ?? new Date()
   }
 
   // ── lifecycle ────────────────────────────────────────────────────────────

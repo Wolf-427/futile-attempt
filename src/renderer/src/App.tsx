@@ -1,30 +1,35 @@
-import { useEffect, useState } from 'react'
-import type { AppInfo } from '@shared/ipc'
+import { useEffect } from 'react'
+import { StartScreen } from './StartScreen'
+import { useApp } from './store'
+import { Workspace } from './Workspace'
 
 export function App() {
-  const [info, setInfo] = useState<AppInfo | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const ready = useApp((s) => s.ready)
+  const project = useApp((s) => s.project)
+  const error = useApp((s) => s.error)
+  const showError = useApp((s) => s.showError)
 
   useEffect(() => {
-    window.scriptum.app
-      .getInfo()
-      .then(setInfo)
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+    void useApp.getState().init()
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.metaKey && e.key.toLowerCase() === 'o') {
+        e.preventDefault()
+        void useApp.getState().openProject()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  if (!ready) return null
   return (
-    <main className="shell">
-      <h1 data-testid="app-title">Scriptum</h1>
-      {info && (
-        <p data-testid="app-version">
-          v{info.version} · Electron {info.electron} · {info.platform}
-        </p>
-      )}
+    <>
+      {project ? <Workspace /> : <StartScreen />}
       {error && (
-        <p data-testid="app-error" role="alert">
+        <div className="toast" role="alert" data-testid="error" onClick={() => showError(null)}>
           {error}
-        </p>
+        </div>
       )}
-    </main>
+    </>
   )
 }
