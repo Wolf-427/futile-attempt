@@ -97,8 +97,11 @@ export function Workspace() {
               <p>{COMING[selected.kind]}</p>
             </div>
           ) : (
-            <div className="placeholder">
-              <p>Select something in the sidebar.</p>
+            <div className="placeholder" data-testid="main-empty">
+              <p>
+                {view === 'documents' ? 'No documents yet.' : view === 'boards' ? 'No boards yet.' : 'No characters yet.'} Add one
+                with + in the sidebar.
+              </p>
             </div>
           )}
         </main>

@@ -94,11 +94,20 @@ test('create, organise, close, move the folder in Finder, reopen: nothing is los
   await expect(row(page, 'Szene A')).toBeVisible()
 
   // Boards and characters.
+  // Switching views switches the main pane too: to the item last open there, else the first.
+  await row(page, 'Prolog').click()
   await page.getByTestId('nav-boards').click()
   await expect(row(page, 'Master board')).toBeVisible()
+  await expect(page.getByTestId('main-pane')).toContainText('Master board')
   await page.getByTestId('nav-characters').click()
+  await expect(page.getByTestId('main-empty')).toContainText('No characters yet')
   await page.getByTestId('add-item').click()
   await renameTo(page, 'Kath')
+  await expect(page.getByTestId('main-pane')).toContainText('Kath')
+  await page.getByTestId('nav-documents').click()
+  await expect(page.getByTestId('main-pane')).toContainText('Prolog')
+  await page.getByTestId('nav-characters').click()
+  await expect(page.getByTestId('main-pane')).toContainText('Kath')
   await page.screenshot({ path: 'test-results/workspace.png' })
 
   // Back to the start screen: the project is in the recent list.
