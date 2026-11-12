@@ -23,3 +23,12 @@ export const A4: PageFormat = {
 
 /** Vertical space between two pages on screen. */
 export const PAGE_GAP = 32
+
+/**
+ * Height of the band inside the bottom margin that holds the page number.
+ * The pagination layer adds the footer's height to the bottom margin it is
+ * given, so the margin passed to it is reduced by this band. The text area
+ * then has exactly the format's margins. Must match the CSS height of
+ * .rm-page-footer-content.
+ */
+export const FOOTER_BAND = 54

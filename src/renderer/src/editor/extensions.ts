@@ -4,7 +4,7 @@ import { StarterKit } from '@tiptap/starter-kit'
 import { PaginationPlus } from 'tiptap-pagination-plus'
 import { Caret } from './caret'
 import { Indent } from './indent'
-import { A4, PAGE_GAP, type PageFormat } from './page'
+import { A4, FOOTER_BAND, PAGE_GAP, type PageFormat } from './page'
 import { PageBreak } from './pageBreak'
 import { Search } from './search'
 
@@ -47,7 +47,7 @@ export function editorExtensions(format: PageFormat = A4): Extensions {
       pageGapBorderColor: 'transparent',
       pageBreakBackground: 'var(--desk-bg)',
       marginTop: format.marginTop,
-      marginBottom: format.marginBottom,
+      marginBottom: format.marginBottom - FOOTER_BAND,
       marginLeft: format.marginLeft,
       marginRight: format.marginRight,
       contentMarginTop: 0,

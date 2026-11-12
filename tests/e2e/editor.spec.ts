@@ -134,6 +134,30 @@ test('pages: text flows onto new pages, never into the gap, and page breaks star
   })
   expect(overlaps).toBe(0)
 
+  // Every sheet is exactly A4 at 96 dpi (794 x 1123) with 25 mm margins, and
+  // the page number sits low in the bottom margin, clear of the text.
+  const geometry = await page.evaluate(() => {
+    const root = document.querySelector('[data-testid="paper"]')
+    if (!root) return null
+    const box = root.getBoundingClientRect()
+    const breakers = Array.from(root.querySelectorAll('.breaker')).map((b) => b.getBoundingClientRect())
+    const first = breakers[0]
+    const second = breakers[1]
+    const number = root.querySelector('.rm-page-number')?.getBoundingClientRect()
+    const gap = root.querySelector('.rm-pagination-gap')?.getBoundingClientRect()
+    if (!first || !second || !number || !gap) return null
+    return {
+      width: Math.round(box.width),
+      textAreaHeight: Math.round(first.top - box.top) - 94,
+      pagePitch: Math.round(second.top - first.top),
+      numberBelowText: Math.round(number.top - first.top),
+      numberAboveEdge: Math.round(gap.top - number.bottom)
+    }
+  })
+  expect(geometry).toMatchObject({ width: 794, textAreaHeight: 935, pagePitch: 1123 + 32 })
+  expect(geometry?.numberBelowText).toBeGreaterThanOrEqual(30)
+  expect(geometry?.numberAboveEdge).toBeGreaterThanOrEqual(40)
+
   // At least one paragraph is split: it starts on one page and ends on the next.
   const split = await page.evaluate(() => {
     const root = document.querySelector('[data-testid="paper"]')

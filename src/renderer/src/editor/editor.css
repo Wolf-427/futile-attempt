@@ -17,6 +17,11 @@
 /* Page numbers and the gap between sheets. */
 .paper .rm-page-footer, .paper .rm-page-header { font-family: var(--sans); font-size: 11px; color: #8a867c; user-select: none; }
 .paper .rm-pagination-gap { border: none !important; }
+/* Block-level, so no stray line spacing is added under them: every sheet is exactly one page tall. */
+.paper .rm-page-footer, .paper .rm-page-header { display: flex !important; }
+/* The page number sits low in the bottom margin, well clear of the text.
+   This block's height is part of the bottom margin: see FOOTER_BAND in page.ts. */
+.paper .rm-page-footer .rm-page-footer-content { box-sizing: border-box; height: 54px; padding-top: 34px; line-height: 14px; }
 
 /* A manual page break fills the rest of its page; a dashed rule marks where it was set. */
 .paper .page-break { position: relative; height: 0; user-select: none; cursor: default; }
