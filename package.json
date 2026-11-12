@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "probe": "node scripts/probe.mjs",
+    "import": "tsx --tsconfig tsconfig.node.json scripts/import-v1.mts",
     "cloud-check": "vitest run --config vitest.cloud.config.mts",
     "test:e2e": "electron-vite build && playwright test",
     "check": "npm run typecheck && npm run test && npm run test:e2e",
@@ -43,11 +44,13 @@
     "electron": "^45.3.0",
     "electron-builder": "^26.18.0",
     "electron-vite": "^6.0.0",
+    "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^8.3.8",
     "vitest": "^5.1.0"
   },
   "dependencies": {
+    "parse5": "^8.1.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "zustand": "^5.1.0"

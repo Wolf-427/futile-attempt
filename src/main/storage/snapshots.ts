@@ -67,13 +67,14 @@ export class SnapshotStore {
     kind: ItemKind | 'manifest',
     itemId: string,
     text: string,
-    reason: string
+    reason: string,
+    at?: Date
   ): Promise<boolean> {
     const existing = await this.list(projectId, kind, itemId)
     const newest = existing[0]
     if (newest && (await this.read(projectId, kind, itemId, newest.name)) === text) return false
 
-    const stamp = (this.options.now?.() ?? new Date()).toISOString().replace(/[:.]/g, '-')
+    const stamp = (at ?? this.options.now?.() ?? new Date()).toISOString().replace(/[:.]/g, '-')
     const safeReason = reason.replace(/[^a-z0-9-]/gi, '-')
     const dir = this.dir(projectId, kind, itemId)
     await atomicWrite(this.fs, join(dir, `${stamp}_${safeReason}.json`), text)

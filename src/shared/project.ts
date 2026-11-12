@@ -15,6 +15,14 @@ export interface IndexEntry {
   title: string
 }
 
+/** An item moved to the trash. Its file lives at trash/<kind>/<id>.json. */
+export interface TrashEntry {
+  kind: ItemKind
+  id: string
+  title: string
+  trashedAt: number
+}
+
 /**
  * `scriptum.json`. Titles, folders and order live here, so listing a project
  * never has to read (or download) the item files themselves.
@@ -27,6 +35,7 @@ export interface ProjectManifest {
   tree: TreeNode[]
   boards: IndexEntry[]
   characters: IndexEntry[]
+  trash: TrashEntry[]
 }
 
 /**

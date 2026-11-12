@@ -9,6 +9,7 @@ import {
   type ItemKind,
   type ItemStatus,
   type ProjectManifest,
+  type TrashEntry,
   type TreeNode
 } from '@shared/project'
 import { cleanTempFiles } from './atomic'
@@ -57,6 +58,20 @@ function isIndex(v: unknown): v is IndexEntry[] {
   )
 }
 
+function isTrash(v: unknown): v is TrashEntry[] {
+  return (
+    Array.isArray(v) &&
+    v.every(
+      (e) =>
+        isRecord(e) &&
+        typeof e['id'] === 'string' &&
+        typeof e['title'] === 'string' &&
+        typeof e['trashedAt'] === 'number' &&
+        (ITEM_KINDS as readonly unknown[]).includes(e['kind'])
+    )
+  )
+}
+
 function isTree(v: unknown): v is TreeNode[] {
   return (
     Array.isArray(v) &&
@@ -100,7 +115,8 @@ function parseManifest(
       created: typeof raw['created'] === 'number' ? raw['created'] : 0,
       tree: raw['tree'],
       boards: raw['boards'],
-      characters: raw['characters']
+      characters: raw['characters'],
+      trash: isTrash(raw['trash']) ? raw['trash'] : []
     }
   }
 }
@@ -188,7 +204,8 @@ export class ProjectStore {
       created: (options.file?.now?.() ?? new Date()).getTime(),
       tree: [],
       boards: [],
-      characters: []
+      characters: [],
+      trash: []
     }
     const manifestFile = await TrackedFile.createNew(
       join(dir, MANIFEST_FILE),
